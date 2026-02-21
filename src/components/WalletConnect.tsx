@@ -28,7 +28,7 @@ export const WalletConnect = ({ account, isConnecting, error, onConnect }: Walle
           onClick={() => account ? undefined : setIsModalOpen(true)}
           className={`rounded-full px-4 py-2 text-sm font-semibold transition-all cursor-pointer ${
             account
-              ? 'bg-uni-surface2 text-white hover:bg-uni-surface3'
+              ? 'bg-uni-surface2 text-uni-text1 hover:bg-uni-surface3'
               : 'bg-uni-pink text-white hover:bg-uni-pink-hover'
           }`}
         >

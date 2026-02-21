@@ -41,7 +41,7 @@ export const SwapAmountInput = ({
           value={value}
           onChange={(e) => handleInputChange(e.target.value)}
           readOnly={readOnly}
-          className={`w-full bg-transparent text-4xl font-light text-white outline-none placeholder:text-uni-text3 ${
+          className={`w-full bg-transparent text-4xl font-light text-uni-text1 outline-none placeholder:text-uni-text3 ${
             readOnly ? 'cursor-default' : ''
           }`}
         />
@@ -51,8 +51,8 @@ export const SwapAmountInput = ({
             onTokenClick ? 'hover:bg-uni-surface3/80 cursor-pointer' : 'cursor-default'
           }`}
         >
-          <span className="text-sm font-medium text-white">{tokenSymbol}</span>
-          {showChevron && <ChevronDown className="h-4 w-4 text-white" />}
+          <span className="text-sm font-medium text-uni-text1">{tokenSymbol}</span>
+          {showChevron && <ChevronDown className="h-4 w-4 text-uni-text1" />}
         </button>
       </div>
       {priceInfo && (

@@ -98,7 +98,7 @@ export const TradeInterface = ({ provider, signer, account, onConnectWallet }: T
       <div className="flex justify-center -my-3 relative z-10">
         <Button
           onClick={handleSwapMode}
-          className="flex h-10 w-10 items-center justify-center rounded-xl border-4 border-uni-surface1 bg-uni-surface2 text-uni-text2 hover:text-white transition-colors cursor-pointer"
+          className="flex h-10 w-10 items-center justify-center rounded-xl border-4 border-uni-surface1 bg-uni-surface2 text-uni-text2 hover:text-uni-text1 transition-colors cursor-pointer"
         >
           <ArrowDown className="h-4 w-4" />
         </Button>

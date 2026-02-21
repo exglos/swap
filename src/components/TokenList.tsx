@@ -37,7 +37,7 @@ export const TokenList = ({ tokens, onSelectToken, currentToken, getTokenLogo }:
         >
           {getTokenLogo(token.symbol)}
           <div className="flex-1 text-left">
-            <p className="text-sm font-medium text-white">{token.name}</p>
+            <p className="text-sm font-medium text-uni-text1">{token.name}</p>
             <p className="text-xs text-uni-text2">
               {token.symbol} {token.address !== 'ETH' && (
                 <span className="ml-1 text-uni-text3">

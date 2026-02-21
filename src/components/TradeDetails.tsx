@@ -17,11 +17,11 @@ export const TradeDetails = ({
     <div className="mt-2 rounded-2xl bg-uni-surface2 p-3 space-y-1">
       <div className="flex justify-between text-xs">
         <span className="text-uni-text2">Price Impact</span>
-        <span className="text-white">{priceImpact}%</span>
+        <span className="text-uni-text1">{priceImpact}%</span>
       </div>
       <div className="flex justify-between text-xs">
         <span className="text-uni-text2">Min. received</span>
-        <span className="text-white">
+        <span className="text-uni-text1">
           {minimumReceived} {isBuying ? tokenSymbol : 'ETH'}
         </span>
       </div>

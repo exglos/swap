@@ -102,7 +102,7 @@ export const TokenSelectorModal = ({ isOpen, onClose, onSelectToken, currentToke
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="max-w-[420px] bg-uni-surface2 border-uni-surface3 p-0 gap-0 overflow-hidden">
         <DialogHeader className="p-5 pb-3">
-          <DialogTitle className="text-white">Select a token</DialogTitle>
+          <DialogTitle className="text-uni-text1">Select a token</DialogTitle>
         </DialogHeader>
 
         <div className="px-5 pb-3">
@@ -113,7 +113,7 @@ export const TokenSelectorModal = ({ isOpen, onClose, onSelectToken, currentToke
               placeholder="Search tokens"
               value={searchQuery}
               onChange={(e) => setSearchQuery(e.target.value)}
-              className="w-full rounded-2xl bg-uni-surface1 border border-uni-surface3 pl-10 pr-4 py-3 text-white placeholder:text-uni-text2 outline-none focus:border-uni-text2 transition-colors"
+              className="w-full rounded-2xl bg-uni-surface1 border border-uni-surface3 pl-10 pr-4 py-3 text-uni-text1 placeholder:text-uni-text2 outline-none focus:border-uni-text2 transition-colors"
             />
           </div>
         </div>
@@ -134,7 +134,7 @@ export const TokenSelectorModal = ({ isOpen, onClose, onSelectToken, currentToke
           <div className="px-5 pb-4 border-t border-uni-surface3 pt-4">
             <button
               onClick={() => handleSelectToken(searchQuery)}
-              className="w-full rounded-xl bg-uni-surface3 hover:bg-uni-surface3/80 px-4 py-3 text-white font-medium transition-colors cursor-pointer"
+              className="w-full rounded-xl bg-uni-surface3 hover:bg-uni-surface3/80 px-4 py-3 text-uni-text1 font-medium transition-colors cursor-pointer"
             >
               Import custom token
             </button>

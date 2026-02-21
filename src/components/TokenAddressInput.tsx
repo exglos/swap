@@ -36,7 +36,7 @@ export const TokenAddressInput = ({
         placeholder="0x..."
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full bg-transparent text-base text-white font-mono outline-none placeholder:text-uni-text3"
+        className="w-full bg-transparent text-base text-uni-text1 font-mono outline-none placeholder:text-uni-text3"
       />
       {isLoading && (
         <p className="text-xs text-uni-text2 mt-2 animate-pulse">Loading token info...</p>

@@ -34,7 +34,7 @@ export const WalletModal = ({ isOpen, onClose, onConnect, isConnecting }: Wallet
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="max-w-[400px] bg-uni-surface2 border-uni-surface3 p-0 gap-0">
         <DialogHeader className="p-5 pb-3">
-          <DialogTitle className="text-white">Connect a wallet</DialogTitle>
+          <DialogTitle className="text-uni-text1">Connect a wallet</DialogTitle>
         </DialogHeader>
 
         <div className="px-3 pb-2">
@@ -48,7 +48,7 @@ export const WalletModal = ({ isOpen, onClose, onConnect, isConnecting }: Wallet
             >
               <div className="flex items-center gap-3">
                 <span className="text-2xl">{wallet.icon}</span>
-                <span className="text-base font-medium text-white">{wallet.name}</span>
+                <span className="text-base font-medium text-uni-text1">{wallet.name}</span>
               </div>
               <span className="text-xs text-green-400 font-medium">Detected</span>
             </Button>
@@ -75,7 +75,7 @@ export const WalletModal = ({ isOpen, onClose, onConnect, isConnecting }: Wallet
             >
               <div className="flex items-center gap-3">
                 <span className="text-2xl">{wallet.icon}</span>
-                <span className="text-base font-medium text-white">{wallet.name}</span>
+                <span className="text-base font-medium text-uni-text1">{wallet.name}</span>
               </div>
               <span className="text-xs text-uni-text2">Install</span>
             </Button>
@@ -88,7 +88,7 @@ export const WalletModal = ({ isOpen, onClose, onConnect, isConnecting }: Wallet
             >
               <div className="flex items-center gap-3">
                 <span className="text-2xl">{wallet.icon}</span>
-                <span className="text-base font-medium text-white">{wallet.name}</span>
+                <span className="text-base font-medium text-uni-text1">{wallet.name}</span>
               </div>
             </button>
           ))}
