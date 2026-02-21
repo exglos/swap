@@ -6,7 +6,7 @@ import { nodePolyfills } from "vite-plugin-node-polyfills"
 
 // https://vite.dev/config/
 export default defineConfig(({ command }) => ({
-  base: command === 'build' ? '/swap/' : '/',
+  base: command === 'build' ? '/' : '/',
   plugins: [
     react(),
     tailwindcss(),
