@@ -13,7 +13,7 @@ export const formatAmount = (amount: string | number, decimals: number = 6): str
 
 export const isValidAddress = (address: string): boolean => {
   try {
-    return ethers.isAddress(address);
+    return ethers.utils.isAddress(address);
   } catch {
     return false;
   }
@@ -21,7 +21,7 @@ export const isValidAddress = (address: string): boolean => {
 
 export const parseInputAmount = (amount: string, decimals: number): bigint => {
   try {
-    return ethers.parseUnits(amount, decimals);
+    return BigInt(ethers.utils.parseUnits(amount, decimals).toString());
   } catch {
     return BigInt(0);
   }
@@ -29,7 +29,7 @@ export const parseInputAmount = (amount: string, decimals: number): bigint => {
 
 export const formatUnitsToString = (amount: bigint, decimals: number): string => {
   try {
-    return ethers.formatUnits(amount, decimals);
+    return ethers.utils.formatUnits(amount, decimals);
   } catch {
     return '0';
   }
