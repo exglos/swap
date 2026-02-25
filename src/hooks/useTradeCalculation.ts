@@ -1,4 +1,4 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { ethers } from 'ethers';
 
 interface UseTradeCalculationProps {
@@ -9,14 +9,14 @@ interface UseTradeCalculationProps {
   tokenInfo: {
     fetchTokenInfo: (address: string) => void;
     clearTokenInfo: () => void;
-    pair: any;
-    token: any;
+    hasLiquidity?: boolean;
   };
   tradeState: {
-    calculateTrade: (pair: any, token: any, amount: string, isBuying: boolean) => void;
+    calculateTrade: (tokenAddress: string, amount: string, isBuying: boolean) => Promise<any>;
     clearTrade: () => void;
-    trade: any;
+    route: any;
     isCalculating: boolean;
+    version: string | null;
   };
   setTokenAmount: (amount: string) => void;
   setEthAmount: (amount: string) => void;
@@ -32,9 +32,15 @@ export const useTradeCalculation = ({
   setTokenAmount,
   setEthAmount,
 }: UseTradeCalculationProps) => {
+  // Extract primitive values to avoid object dependencies
+  const hasLiquidity = tokenInfo.hasLiquidity;
+  const isCalculating = tradeState.isCalculating;
+  const routeOutputAmount = tradeState.route?.outputAmount;
+  
+  // Fetch token info with debouncing
   useEffect(() => {
     const timeoutId = setTimeout(() => {
-      if (tokenAddress && ethers.isAddress(tokenAddress)) {
+      if (tokenAddress && ethers.utils.isAddress(tokenAddress)) {
         tokenInfo.fetchTokenInfo(tokenAddress);
       } else if (tokenAddress) {
         tokenInfo.clearTokenInfo();
@@ -42,26 +48,40 @@ export const useTradeCalculation = ({
     }, 500);
 
     return () => clearTimeout(timeoutId);
-  }, [tokenAddress, tokenInfo.fetchTokenInfo, tokenInfo.clearTokenInfo]);
+  }, [tokenAddress]);
 
+  // Calculate trade when inputs change
   useEffect(() => {
-    if (tokenInfo.pair && tokenInfo.token) {
-      const amount = isBuying ? ethAmount : tokenAmount;
-      if (amount && parseFloat(amount) > 0) {
-        tradeState.calculateTrade(tokenInfo.pair, tokenInfo.token, amount, isBuying);
-      } else {
-        tradeState.clearTrade();
-      }
+    if (!tokenAddress || !ethers.utils.isAddress(tokenAddress) || !hasLiquidity) {
+      return;
     }
-  }, [ethAmount, tokenAmount, isBuying, tokenInfo.pair, tokenInfo.token, tradeState.calculateTrade, tradeState.clearTrade]);
 
+    const amount = isBuying ? ethAmount : tokenAmount;
+    if (amount && parseFloat(amount) > 0) {
+      tradeState.calculateTrade(tokenAddress, amount, isBuying);
+    } else {
+      tradeState.clearTrade();
+    }
+  }, [ethAmount, tokenAmount, isBuying, tokenAddress, hasLiquidity]);
+
+  // Update output amount when trade route changes
+  // Use a ref to track the last output to prevent loops
+  const lastOutputRef = useRef<string>('');
+  
   useEffect(() => {
-    if (tradeState.trade && !tradeState.isCalculating) {
+    if (!routeOutputAmount || isCalculating) {
+      return;
+    }
+    
+    // Only update if output actually changed
+    if (routeOutputAmount !== lastOutputRef.current) {
+      lastOutputRef.current = routeOutputAmount;
+      
       if (isBuying) {
-        setTokenAmount(tradeState.trade.outputAmount.toSignificant(6));
+        setTokenAmount(routeOutputAmount);
       } else {
-        setEthAmount(tradeState.trade.outputAmount.toSignificant(6));
+        setEthAmount(routeOutputAmount);
       }
     }
-  }, [tradeState.trade, tradeState.isCalculating, isBuying, setTokenAmount, setEthAmount]);
+  }, [routeOutputAmount, isCalculating, isBuying, setTokenAmount, setEthAmount]);
 };

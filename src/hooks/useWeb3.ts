@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
-import { BrowserProvider, type Signer } from 'ethers';
+import { providers, type Signer } from 'ethers';
 import { CHAIN_ID } from '@/utils/constants';
 import type { EthereumProvider } from '@/types/window';
 
@@ -13,7 +13,8 @@ export interface DetectedWallet {
 }
 
 interface Web3State {
-  provider: BrowserProvider | null;
+  provider: providers.Web3Provider | null;
+  readonlyProvider: providers.JsonRpcProvider;
   signer: Signer | null;
   account: string | null;
   chainId: number | null;
@@ -67,7 +68,11 @@ export function detectWallets(): DetectedWallet[] {
 }
 
 export const useWeb3 = () => {
+  // a readonly provider for when injected provider is not available yet
+  const readonlyProvider = new providers.JsonRpcProvider('https://mainnet.infura.io/v3/02bcf0c674d447da967b67b20739ea91')
+
   const [state, setState] = useState<Web3State>({
+    readonlyProvider:readonlyProvider,
     provider: null,
     signer: null,
     account: null,
@@ -94,7 +99,7 @@ export const useWeb3 = () => {
         throw new Error('No accounts returned');
       }
 
-      const provider = new BrowserProvider(ethereum as any);
+      const provider = new providers.Web3Provider(ethereum as any);
       const signer = await provider.getSigner();
       const account = await signer.getAddress();
       const network = await provider.getNetwork();
@@ -103,6 +108,7 @@ export const useWeb3 = () => {
       setActiveProvider(ethereum);
 
       setState({
+        readonlyProvider,
         provider,
         signer,
         account,
@@ -123,6 +129,7 @@ export const useWeb3 = () => {
   const disconnect = useCallback(() => {
     setActiveProvider(null);
     setState({
+      readonlyProvider,
       provider: null,
       signer: null,
       account: null,
@@ -141,8 +148,9 @@ export const useWeb3 = () => {
       if (accounts.length === 0) {
         disconnect();
       } else {
-        const provider = new BrowserProvider(ethereum as any);
-        provider.getSigner().then(async (signer) => {
+        const provider = new providers.Web3Provider(ethereum as any);
+        (async () => {
+          const signer = await provider.getSigner();
           const account = await signer.getAddress();
           const network = await provider.getNetwork();
           setState(prev => ({
@@ -152,7 +160,7 @@ export const useWeb3 = () => {
             account,
             chainId: Number(network.chainId),
           }));
-        }).catch(console.error);
+        })().catch(console.error);
       }
     };
 

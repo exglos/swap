@@ -1,8 +1,7 @@
 import { useState, useCallback } from 'react';
 import { ethers } from 'ethers';
-import { Token, CurrencyAmount } from '@uniswap/sdk-core';
-import { Pair } from '@uniswap/v2-sdk';
-import { CHAIN_ID, ERC20_ABI, FACTORY_ABI, PAIR_ABI, FACTORY_ADDRESS, WETH_ADDRESS } from '@/utils/constants';
+import { Token } from '@uniswap/sdk-core';
+import { CHAIN_ID, ERC20_ABI } from '@/utils/constants';
 
 interface TokenInfo {
   token: Token | null;
@@ -10,98 +9,110 @@ interface TokenInfo {
   symbol: string;
   decimals: number;
   hasLiquidity: boolean;
-  pair: Pair | null;
-  liquidityETH?: string;
-  liquidityToken?: string;
   isLoading: boolean;
   error: string | null;
 }
 
-export const useToken = (provider: ethers.BrowserProvider | null) => {
+export const useToken = (provider: ethers.providers.Web3Provider | null, readOnlyProvider: ethers.providers.JsonRpcProvider) => {
+
   const [tokenInfo, setTokenInfo] = useState<TokenInfo>({
     token: null,
     name: '',
     symbol: '',
     decimals: 0,
-    hasLiquidity: false,
-    pair: null,
+    hasLiquidity: true,
     isLoading: false,
     error: null,
   });
 
   const fetchTokenInfo = useCallback(async (tokenAddress: string) => {
-    if (!provider || !ethers.isAddress(tokenAddress)) {
-      setTokenInfo(prev => ({ ...prev, error: 'Invalid token address' }));
+    // use a readonly provider for when injected provider is not available yet to handle token info display
+    const defaultProvider = !provider ? readOnlyProvider : provider
+
+    if (!ethers.utils.isAddress(tokenAddress)) {
+      setTokenInfo(prev => ({ 
+        ...prev, 
+        error: 'Invalid token address format. Please check the address and try again.',
+        isLoading: false 
+      }));
       return;
     }
 
     setTokenInfo(prev => ({ ...prev, isLoading: true, error: null }));
 
     try {
-      const tokenContract = new ethers.Contract(tokenAddress, ERC20_ABI, provider);
+      const tokenContract = new ethers.Contract(tokenAddress, ERC20_ABI, defaultProvider);
       
-      const [name, symbol, decimals] = await Promise.all([
-        tokenContract.name(),
-        tokenContract.symbol(),
-        tokenContract.decimals(),
+      // Add timeout to prevent hanging requests
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Token info request timed out')), 10000)
+      );
+
+      // Fetch token info with timeout
+      const [name, symbol, decimals] = await Promise.race([
+        Promise.all([
+          tokenContract.name(),
+          tokenContract.symbol(),
+          tokenContract.decimals()
+        ]),
+        timeoutPromise.then(() => {
+          throw new Error('Token info request timed out');
+        })
       ]);
 
-      const token = new Token(CHAIN_ID, tokenAddress, Number(decimals), symbol, name);
-
-      const factoryContract = new ethers.Contract(FACTORY_ADDRESS, FACTORY_ABI, provider);
-      const pairAddress = await factoryContract.getPair(tokenAddress, WETH_ADDRESS);
-      
-      const hasLiquidity = pairAddress !== ethers.ZeroAddress;
-      let pair: Pair | null = null;
-
-      let liquidityETH: string | undefined;
-      let liquidityToken: string | undefined;
-
-      if (hasLiquidity) {
-        const pairContract = new ethers.Contract(pairAddress, PAIR_ABI, provider);
-        const [reserves, token0Address] = await Promise.all([
-          pairContract.getReserves(),
-          pairContract.token0(),
-        ]);
-
-        const wethToken = new Token(CHAIN_ID, WETH_ADDRESS, 18, 'WETH', 'Wrapped Ether');
-        const [token0, token1] = token0Address.toLowerCase() === tokenAddress.toLowerCase()
-          ? [token, wethToken]
-          : [wethToken, token];
-
-        const reserve0 = CurrencyAmount.fromRawAmount(token0, reserves[0].toString());
-        const reserve1 = CurrencyAmount.fromRawAmount(token1, reserves[1].toString());
-
-        pair = new Pair(reserve0, reserve1);
-
-        // Calculate liquidity amounts for display
-        const isToken0 = token0Address.toLowerCase() === tokenAddress.toLowerCase();
-        liquidityToken = isToken0 
-          ? ethers.formatUnits(reserves[0], Number(decimals))
-          : ethers.formatUnits(reserves[1], Number(decimals));
-        liquidityETH = isToken0
-          ? ethers.formatUnits(reserves[1], 18)
-          : ethers.formatUnits(reserves[0], 18);
+      // Validate decimals
+      const decimalsNum = Number(decimals);
+      if (isNaN(decimalsNum) || decimalsNum < 0 || decimalsNum > 255) {
+        throw new Error('Invalid token decimals');
       }
+
+      // Validate symbol and name
+      if (!symbol || typeof symbol !== 'string') {
+        throw new Error('Invalid token symbol');
+      }
+
+      if (!name || typeof name !== 'string') {
+        throw new Error('Invalid token name');
+      }
+
+      // Create token object
+      const token = new Token(CHAIN_ID, tokenAddress, decimalsNum, symbol, name);
 
       setTokenInfo({
         token,
         name,
         symbol,
-        decimals: Number(decimals),
-        hasLiquidity,
-        pair,
-        liquidityETH,
-        liquidityToken,
+        decimals: decimalsNum,
+        hasLiquidity: true,
         isLoading: false,
         error: null,
       });
     } catch (error: any) {
       console.error('Error fetching token info:', error);
+      
+      let errorMessage = 'Failed to fetch token information';
+      
+      // Provide specific error messages based on common issues
+      if (error.code === 'CALL_EXCEPTION') {
+        errorMessage = 'Contract does not exist or is not a valid ERC20 token';
+      } else if (error.code === 'NETWORK_ERROR') {
+        errorMessage = 'Network error. Please check your connection and try again';
+      } else if (error.message?.includes('timeout')) {
+        errorMessage = 'Request timed out. The token contract might be unresponsive';
+      } else if (error.message?.includes('Invalid token')) {
+        errorMessage = error.message;
+      } else if (error.message) {
+        errorMessage = error.message;
+      }
+
       setTokenInfo(prev => ({
         ...prev,
         isLoading: false,
-        error: error.message || 'Failed to fetch token information',
+        error: errorMessage,
+        token: null,
+        name: '',
+        symbol: '',
+        decimals: 0,
       }));
     }
   }, [provider]);
@@ -112,8 +123,7 @@ export const useToken = (provider: ethers.BrowserProvider | null) => {
       name: '',
       symbol: '',
       decimals: 0,
-      hasLiquidity: false,
-      pair: null,
+      hasLiquidity: true,
       isLoading: false,
       error: null,
     });
