@@ -8,7 +8,7 @@ import { ThemeToggle } from '@/components/ThemeToggle';
 import type { WalletType } from '@/hooks/useWeb3';
 
 function App() {
-  const { provider, signer, account, isConnecting, error, connect } = useWeb3();
+  const { readonlyProvider, provider, signer, account, isConnecting, error, connect } = useWeb3();
   const { theme, toggleTheme } = useTheme();
   const [isWalletModalOpen, setIsWalletModalOpen] = useState(false);
 
@@ -45,6 +45,7 @@ function App() {
           </p>
         </div>
         <TradeInterface
+          readonlyProvider={readonlyProvider}
           provider={provider}
           signer={signer}
           account={account}
