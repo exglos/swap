@@ -9,9 +9,14 @@ import { useToken } from '@/hooks/useToken';
 import { useTrade } from '@/hooks/useTrade';
 import { useTradeExecution } from '@/hooks/useTradeExecution';
 import { useTradeCalculation } from '@/hooks/useTradeCalculation';
-import { ArrowDown } from 'lucide-react';
+import { useWalletBalances } from '@/hooks/useWalletBalances';
+import { useWETH } from '@/hooks/useWETH';
+import { WrapModal } from './WrapModal';
+import { TradeSettings } from './TradeSettings';
+import { ArrowDown, Settings } from 'lucide-react';
 import { ethers } from 'ethers';
 import { Button } from './ui/button';
+import { showTransactionToast, showWrapToast } from '@/utils/notifications';
 
 // Import the popular tokens list for fallback
 const POPULAR_TOKENS = [
@@ -55,6 +60,15 @@ export const TradeInterface = ({ provider, signer, account, onConnectWallet,read
   const tokenInfo = useToken(provider, readonlyProvider);
   const tradeState = useTrade(provider, signer);
   const { txStatus, executeTrade } = useTradeExecution();
+  const { eth, weth, loading: balanceLoading } = useWalletBalances(provider, account);
+  const wethHook = useWETH(signer);
+
+  const [isWrapModalOpen, setWrapModalOpen] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [settings, setSettings] = useState({
+    slippage: 0.5, // percent
+    deadline: 20,   // minutes
+  });
 
   // Fallback token info for when provider is not available
   const fallbackTokenInfo = useMemo(() => {
@@ -127,21 +141,102 @@ export const TradeInterface = ({ provider, signer, account, onConnectWallet,read
 
   const handleTrade = async () => {
     if (!account || !tradeState.route) return;
-    await executeTrade(account, isBuying, tradeState.executeTrade, () => {
+    
+    // Create the execution promise
+    const tradePromise = executeTrade(account, isBuying, tradeState.executeTrade, () => {
       setEthAmount('');
       setTokenAmount('');
       tradeState.clearTrade();
-    });
+    }, settings.slippage, settings.deadline);
+    
+    // Show transaction toast
+    showTransactionToast(tradePromise, `${isBuying ? 'Buy' : 'Sell'} ${displayTokenInfo.symbol}`);
+    
+    try {
+      await tradePromise;
+    } catch (error) {
+      // Error is already handled by the toast
+    }
+  };
+
+  // Check if user has enough balance for the trade
+  const hasEnoughBalance = () => {
+    if (!isBuying || !ethAmount) return true; // Selling doesn't need ETH balance check here
+    
+    const amountNum = parseFloat(ethAmount);
+    if (isNaN(amountNum) || amountNum <= 0) return false;
+    
+    // Add gas buffer (0.005 ETH for safety)
+    const gasBuffer = 0.005;
+    const requiredAmount = amountNum + gasBuffer;
+    
+    if (tradeState.version === 'V4') {
+      // V4 uses native ETH
+      return parseFloat(eth) >= requiredAmount;
+    } else {
+      // V3 can use WETH or wrap ETH
+      const totalAvailable = parseFloat(eth) + parseFloat(weth);
+      return totalAvailable >= requiredAmount;
+    }
+  };
+
+  const getBalanceMessage = () => {
+    if (!account) return null;
+    
+    if (balanceLoading) return "Checking balances...";
+    if (needsWrapping()) {
+      return `Wrap ${ethAmount} ETH to WETH for V3 trading`;
+    }
+    if (!hasEnoughBalance()) {
+      if (tradeState.version === 'V4') {
+        return `Insufficient ETH. You have ${parseFloat(eth).toFixed(4)} ETH, need at least ${(parseFloat(ethAmount) + 0.005).toFixed(4)} ETH (including gas)`;
+      } else {
+        const total = parseFloat(eth) + parseFloat(weth);
+        return `Insufficient funds. You have ${total.toFixed(4)} ETH total, need at least ${(parseFloat(ethAmount) + 0.005).toFixed(4)} ETH (including gas)`;
+      }
+    }
+    return null;
   };
 
   const canTrade = !!(account && 
     displayTokenInfo.hasLiquidity && 
     tradeState.route && 
-    ((isBuying && ethAmount) || (!isBuying && tokenAmount)));
+    ((isBuying && ethAmount) || (!isBuying && tokenAmount)) &&
+    hasEnoughBalance());
+
+  // Check if user needs to wrap ETH for V3
+  const needsWrapping = () => {
+    if (!isBuying || !ethAmount || tradeState.version !== 'V3') return false;
+    
+    const amountNum = parseFloat(ethAmount);
+    const wethBalance = parseFloat(weth);
+    const ethBalance = parseFloat(eth);
+    
+    // Need wrapping if: ETH amount > WETH balance AND have enough ETH to wrap
+    return amountNum > wethBalance && ethBalance >= amountNum;
+  };
+
+  const handleWrapConfirm = async (amount: string) => {
+    try {
+      const wrapPromise = wethHook.wrap(amount);
+      showWrapToast(wrapPromise, amount, 'wrap');
+      
+      await wrapPromise;
+      
+      // Refresh balances after wrapping
+      setTimeout(() => {
+        // This will trigger balance refresh in the hook
+        window.location.reload(); // Simple refresh for now
+      }, 3000);
+    } catch (error) {
+    }
+  };
 
   const handleButtonClick = () => {
     if (!account) {
       onConnectWallet();
+    } else if (needsWrapping()) {
+      setWrapModalOpen(true);
     } else if (canTrade) {
       handleTrade();
     }
@@ -197,6 +292,28 @@ export const TradeInterface = ({ provider, signer, account, onConnectWallet,read
         feeTier={tradeState.route?.feeTier}
       />
 
+      {/* Settings Section */}
+      <div className="flex items-center justify-between mt-3">
+        <div className="flex items-center gap-4 text-xs text-gray-400">
+          <span>Slippage: {settings.slippage}%</span>
+          <span>Deadline: {settings.deadline}m</span>
+        </div>
+        <button
+          onClick={() => setIsSettingsOpen(true)}
+          className="p-2 rounded-lg hover:bg-gray-800 transition-colors text-gray-400 hover:text-white"
+        >
+          <Settings className="w-4 h-4" />
+        </button>
+      </div>
+
+      {getBalanceMessage() && (
+        <div className="mt-2 p-3 rounded-xl bg-uni-surface2 border border-uni-surface3">
+          <p className="text-sm text-uni-text2 leading-relaxed">
+            {getBalanceMessage()}
+          </p>
+        </div>
+      )}
+
       <SwapButton
         account={account}
         canTrade={canTrade}
@@ -207,7 +324,7 @@ export const TradeInterface = ({ provider, signer, account, onConnectWallet,read
         isBuying={isBuying}
         ethAmount={ethAmount}
         tokenAmount={tokenAmount}
-        tokenSymbol={displayTokenInfo.symbol}
+        tokenSymbol={displayTokenInfo?.symbol}
         onClick={handleButtonClick}
       />
 
@@ -230,6 +347,23 @@ export const TradeInterface = ({ provider, signer, account, onConnectWallet,read
           setIsTokenSelectorOpen(false);
         }}
         currentToken={tokenAddress}
+      />
+
+      <WrapModal
+        isOpen={isWrapModalOpen}
+        onClose={() => setWrapModalOpen(false)}
+        onConfirm={handleWrapConfirm}
+        amount={ethAmount}
+        loading={wethHook.loading}
+        error={wethHook.error}
+        txHash={wethHook.txHash}
+      />
+
+      <TradeSettings
+        isOpen={isSettingsOpen}
+        onClose={() => setIsSettingsOpen(false)}
+        settings={settings}
+        setSettings={setSettings}
       />
     </div>
   );

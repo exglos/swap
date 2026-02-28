@@ -29,6 +29,25 @@ export const SwapAmountInput = ({
     }
   };
 
+  // Check for large amounts and show warning
+  const getAmountWarning = () => {
+    if (!value || tokenSymbol !== 'ETH') return null;
+    
+    const numValue = parseFloat(value);
+    if (isNaN(numValue) || numValue <= 0) return null;
+    
+    if (numValue > 10) {
+      return {
+        type: 'error' as const,
+        message: `Very large amount detected (${numValue} ETH). For security, please use smaller amounts.`
+      };
+    }
+    
+    return null;
+  };
+
+  const amountWarning = getAmountWarning();
+
   return (
     <div className="rounded-2xl bg-uni-surface2 p-4">
       <Label className="text-sm text-uni-text2 mb-1 block">{label}</Label>
@@ -57,6 +76,15 @@ export const SwapAmountInput = ({
       </div>
       {priceInfo && (
         <p className="text-xs text-uni-text2 mt-2">{priceInfo}</p>
+      )}
+      {amountWarning && (
+        <div className={`mt-2 rounded-lg p-2 text-xs ${
+          amountWarning.type === 'error' 
+            ? 'bg-uni-pink-hover/10 border border-uni-pink-hover/20 text-uni-pink-hover' 
+            : 'bg-uni-text3/10 border border-uni-text3/20 text-uni-text3'
+        }`}>
+          <p className="font-medium">{amountWarning.message}</p>
+        </div>
       )}
     </div>
   );
