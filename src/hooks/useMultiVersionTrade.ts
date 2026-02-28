@@ -57,21 +57,27 @@ export const useMultiVersionTrade = (
         }
 
         // Fallback to V3 if V4 not available
-        const v3Result = await v3Trade.calculateTrade(token, amount, isBuying);
+                
+        try {
+          const v3Result = await v3Trade.calculateTrade(token, amount, isBuying);
+          
+          if (v3Result && v3Result.route) {
+            setState({
+              primaryRoute: null,
+              fallbackRoute: v3Result.route,
+              selectedRoute: v3Result.route,
+              isCalculating: false,
+              error: null,
+              version: 'V3',
+            });
+            return v3Result;
+          }
 
-        if (v3Result && v3Result.route) {
-          setState({
-            primaryRoute: null,
-            fallbackRoute: v3Result.route,
-            selectedRoute: v3Result.route,
-            isCalculating: false,
-            error: null,
-            version: 'V3',
-          });
-          return v3Result;
+          throw new Error('No liquidity pools found on V4 or V3');
+        } catch (v3Error: any) {
+          console.error('Both V4 and V3 failed:', v3Error);
+          throw v3Error;
         }
-
-        throw new Error('No liquidity pools found on V4 or V3');
       } catch (error: any) {
         setState({
           primaryRoute: null,
@@ -88,7 +94,7 @@ export const useMultiVersionTrade = (
   );
 
   const executeTrade = useCallback(
-    async (account: string, isBuying: boolean) => {
+    async (account: string, isBuying: boolean, slippage: number, deadline: number) => {
       if (!state.selectedRoute || !state.version) {
         throw new Error('No trade route selected');
       }
@@ -98,10 +104,12 @@ export const useMultiVersionTrade = (
           v4Trade.poolInfo,
           state.selectedRoute,
           account,
-          isBuying
+          isBuying,
+          slippage,
+          deadline
         );
       } else if (state.version === 'V3' && v3Trade.trade) {
-        return await v3Trade.executeTrade(v3Trade.trade, account, isBuying);
+        return await v3Trade.executeTrade(v3Trade.trade, account, isBuying, slippage, deadline);
       }
 
       throw new Error('Trade execution failed: Invalid state');

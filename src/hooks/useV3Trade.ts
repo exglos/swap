@@ -38,13 +38,8 @@ export const useV3Trade = (
   const findBestPool = useCallback(
     async (tokenA: Token, tokenB: Token): Promise<V3PoolInfo | null> => {
       if (!provider) {
-        console.error('V3: Provider is null');
         return null;
       }
-
-      console.log('V3: Finding pool for', tokenA.symbol, '/', tokenB.symbol);
-      console.log('V3: TokenA address:', tokenA.address);
-      console.log('V3: TokenB address:', tokenB.address);
 
       const feeTiers = [FeeAmount.MEDIUM, FeeAmount.LOW, FeeAmount.HIGH, FeeAmount.LOWEST];
 
@@ -52,10 +47,8 @@ export const useV3Trade = (
         try {
           // Use official V3 SDK method to compute pool address
           const poolAddress = Pool.getAddress(tokenA, tokenB, fee);
-          console.log(`V3: Checking pool at ${poolAddress} for fee ${fee}`);
           
           if (poolAddress === ethers.constants.AddressZero) {
-            console.log('V3: Pool address is zero, skipping');
             continue;
           }
 
@@ -97,8 +90,7 @@ export const useV3Trade = (
             tick: slot0.tick,
           };
         } catch (error) {
-          console.log(`No V3 pool found for fee tier ${fee}:`, error);
-          continue;
+                    continue;
         }
       }
 
@@ -222,19 +214,76 @@ export const useV3Trade = (
     async (
       trade: Trade<Token, Token, TradeType>,
       account: string,
-      isBuying: boolean
+      isBuying: boolean,
+      slippage: number,
+      deadline: number
     ): Promise<ethers.ContractTransaction> => {
       if (!signer || !trade) {
         throw new Error('Wallet not connected or trade not calculated');
       }
+      // Check wallet balance for ETH buys
+      if (isBuying) {
+        try {
+          const balance = await signer.provider!.getBalance(account);
+          const value = ethers.utils.parseUnits(trade.inputAmount.toExact(), 18);
+          
+          if (balance.lt(value)) {
+            const shortage = value.sub(balance);
+            const message = 
+              `Insufficient ETH balance.\n` +
+              `Your balance: ${ethers.utils.formatEther(balance)} ETH\n` +
+              `Required: ${ethers.utils.formatEther(value)} ETH\n` +
+              `Shortage: ${ethers.utils.formatEther(shortage)} ETH\n\n` +
+              `Please add ETH to your wallet or use a smaller amount.`;
+            
+            throw new Error(message);
+          }
+        } catch (balanceError: any) {
+          if (balanceError.message.includes('Insufficient ETH balance')) {
+            throw balanceError;
+          }
+          console.warn('Could not check wallet balance:', balanceError);
+        }
+      }
 
-      const slippageTolerance = new Percent(DEFAULT_SLIPPAGE, 10000);
-      const deadline = calculateDeadline(20);
+      // Check token balance for sells
+      if (!isBuying) {
+        try {
+          const tokenContract = new ethers.Contract(
+            trade.inputAmount.currency.address,
+            ERC20_ABI,
+            signer
+          );
+          const balance = await tokenContract.balanceOf(account);
+          const amountIn = ethers.utils.parseUnits(trade.inputAmount.toExact(), trade.inputAmount.currency.decimals);
+          
+          if (balance.lt(amountIn)) {
+            const shortage = amountIn.sub(balance);
+            const symbol = trade.inputAmount.currency.symbol;
+            const message = 
+              `Insufficient ${symbol} balance.\n` +
+              `Your balance: ${ethers.utils.formatUnits(balance, trade.inputAmount.currency.decimals)} ${symbol}\n` +
+              `Required: ${trade.inputAmount.toExact()} ${symbol}\n` +
+              `Shortage: ${ethers.utils.formatUnits(shortage, trade.inputAmount.currency.decimals)} ${symbol}\n\n` +
+              `Please buy more ${symbol} or use a smaller amount.`;
+            
+            throw new Error(message);
+          }
+        } catch (balanceError: any) {
+          if (balanceError.message.includes('Insufficient')) {
+            throw balanceError;
+          }
+          console.warn('Could not check token balance:', balanceError);
+        }
+      }
+
+      const slippageTolerance = new Percent(Math.floor(slippage * 100), 10000);
+      const deadlineTime = calculateDeadline(deadline);
 
       const methodParameters = SwapRouter.swapCallParameters([trade], {
         slippageTolerance,
         recipient: account,
-        deadline,
+        deadline: deadlineTime,
       });
 
       // Create router contract instance for proper ContractTransactionResponse
@@ -245,9 +294,42 @@ export const useV3Trade = (
       );
 
       if (isBuying) {
-        const value = ethers.utils.parseEther(trade.inputAmount.toExact());
-        const tx = await routerContract.multicall(deadline, [methodParameters.calldata], { value });
-        return tx;
+        // For ETH buys, the trade.inputAmount should be the ETH amount
+        // Since we're buying tokens with ETH, inputAmount represents ETH
+        const value = ethers.utils.parseUnits(trade.inputAmount.toExact(), 18); // ETH always has 18 decimals
+        
+        try {
+          const tx = await routerContract.multicall(deadline, [methodParameters.calldata], { value });
+          return tx;
+        } catch (error: any) {
+          console.error('V3 Buy Error:', error);
+          
+          // Handle UNPREDICTABLE_GAS_LIMIT with helpful error messages
+          if (error.code === 'UNPREDICTABLE_GAS_LIMIT') {
+            const tokenSymbol = trade.outputAmount.currency.symbol;
+            
+            // Common causes of gas estimation failures
+            const possibleCauses = [
+              `Insufficient ${tokenSymbol} liquidity in the pool`,
+              `Slippage protection too tight (minimum output too high)`,
+              'Insufficient token approval for the router',
+              'Token balance too low for the swap',
+              'Pool price moved significantly during estimation'
+            ];
+            
+            const helpfulMessage = 
+              `Transaction simulation failed. This usually means:\n\n` +
+              possibleCauses.map((cause, i) => `${i + 1}. ${cause}`).join('\n') +
+              `\n\nTry:\n` +
+              `• Using a smaller amount\n` +
+              `• Increasing slippage tolerance\n` +
+              `• Checking your token balance and approvals`;
+            
+            throw new Error(helpfulMessage);
+          }
+          
+          throw error;
+        }
       } else {
         const tokenContract = new ethers.Contract(
           trade.inputAmount.currency.address,
@@ -267,8 +349,38 @@ export const useV3Trade = (
           await approveTx.wait();
         }
 
-        const tx = await routerContract.multicall(deadline, [methodParameters.calldata]);
-        return tx;
+        try {
+          const tx = await routerContract.multicall(deadline, [methodParameters.calldata]);
+            return tx;
+        } catch (error: any) {
+          console.error('V3 Sell Error:', error);
+          
+          // Handle UNPREDICTABLE_GAS_LIMIT with helpful error messages
+          if (error.code === 'UNPREDICTABLE_GAS_LIMIT') {
+            const tokenSymbol = trade.inputAmount.currency.symbol;
+            
+            // Common causes of gas estimation failures
+            const possibleCauses = [
+              `Insufficient ${tokenSymbol} balance for the swap`,
+              `Slippage protection too tight (minimum output too high)`,
+              'Insufficient token approval for the router',
+              'Low liquidity in the trading pool',
+              'Pool price moved significantly during estimation'
+            ];
+            
+            const helpfulMessage = 
+              `Transaction simulation failed. This usually means:\n\n` +
+              possibleCauses.map((cause, i) => `${i + 1}. ${cause}`).join('\n') +
+              `\n\nTry:\n` +
+              `• Using a smaller amount\n` +
+              `• Increasing slippage tolerance\n` +
+              `• Checking your token balance and approvals`;
+            
+            throw new Error(helpfulMessage);
+          }
+          
+          throw error;
+        }
       }
     },
     [signer]

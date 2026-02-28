@@ -9,8 +9,10 @@ interface TradeExecutionState {
   executeTrade: (
     account: string,
     isBuying: boolean,
-    executeTradeCallback: (account: string, isBuying: boolean) => Promise<ContractTransaction>,
-    onSuccess: () => void
+    executeTradeCallback: (account: string, isBuying: boolean, slippage: number, deadline: number) => Promise<ContractTransaction>,
+    onSuccess: () => void,
+    slippage: number,
+    deadline: number
   ) => Promise<void>;
 }
 
@@ -20,13 +22,15 @@ export const useTradeExecution = (): TradeExecutionState => {
   const executeTrade = async (
     account: string,
     isBuying: boolean,
-    executeTradeCallback: (account: string, isBuying: boolean) => Promise<ContractTransaction>,
-    onSuccess: () => void
+    executeTradeCallback: (account: string, isBuying: boolean, slippage: number, deadline: number) => Promise<ContractTransaction>,
+    onSuccess: () => void,
+    slippage: number,
+    deadline: number
   ) => {
     setTxStatus({ type: 'loading', message: 'Preparing transaction...' });
 
     try {
-      const tx = await executeTradeCallback(account, isBuying);
+      const tx = await executeTradeCallback(account, isBuying, slippage, deadline);
       setTxStatus({ type: 'loading', message: `Transaction submitted: ${tx.hash.slice(0, 10)}...` });
       
       await tx.wait();
