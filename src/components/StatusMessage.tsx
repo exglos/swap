@@ -24,26 +24,43 @@ export const StatusMessage = ({ type, message }: StatusMessageProps) => {
                          message.toLowerCase().includes('insufficient');
 
   return (
-    <div className={`flex items-center gap-3 rounded-2xl p-4 border ${
+    <div className={`flex items-start gap-3 rounded-2xl p-4 border ${
       type === 'error' && isBalanceError 
         ? 'bg-uni-pink-hover/15 border-uni-pink-hover/30 text-uni-pink-hover' 
         : styles[type]
     }`}>
-      <div className={`${
+      <div className={`mt-0.5 ${
         type === 'error' && isBalanceError ? 'text-uni-pink-hover' : ''
       }`}>
         {icons[type]}
       </div>
-      <div className="flex-1">
-        <p className={`text-sm font-medium ${
-          type === 'error' && isBalanceError ? 'text-uni-pink-hover' : ''
-        }`}>
-          {message}
-        </p>
-        {type === 'error' && isBalanceError && (
-          <p className="text-xs text-uni-text2 mt-1">
-            Please check your wallet balance or try a smaller amount
+      <div className="flex-1 min-w-0">
+        {message.includes('\n') ? (
+          // Multi-line message (like balance errors)
+          <div className={`text-sm font-medium whitespace-pre-line ${
+            type === 'error' && isBalanceError ? 'text-uni-pink-hover' : ''
+          }`}>
+            {message}
+          </div>
+        ) : (
+          // Single line message
+          <p className={`text-sm font-medium ${
+            type === 'error' && isBalanceError ? 'text-uni-pink-hover' : ''
+          }`}>
+            {message}
           </p>
+        )}
+        {type === 'error' && isBalanceError && (
+          <div className="mt-2 space-y-1">
+            <p className="text-xs text-uni-text2">
+              <strong>Suggestions:</strong>
+            </p>
+            <ul className="text-xs text-uni-text2 list-disc list-inside space-y-1">
+              <li>Add ETH to your wallet</li>
+              <li>Try a smaller amount (0.01 ETH or less)</li>
+              <li>Check your wallet network is Mainnet</li>
+            </ul>
+          </div>
         )}
       </div>
     </div>
