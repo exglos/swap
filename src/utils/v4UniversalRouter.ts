@@ -1,6 +1,5 @@
 import { ethers } from 'ethers';
 import { Token } from '@uniswap/sdk-core';
-import { Actions, V4Planner } from '@uniswap/v4-sdk';
 import { CommandType, RoutePlanner } from '@uniswap/universal-router-sdk';
 import { UNIVERSAL_ROUTER_ADDRESS, UNIVERSAL_ROUTER_ABI, DEFAULT_SLIPPAGE } from './constants';
 
@@ -30,10 +29,11 @@ interface V4SwapParams {
   tokenOut: Token;
   amountIn: string;
   amountOut: string;
+  minAmountOut?: string;
   fee: number;
-  recipient: string;
   poolId: string;
   isBuying: boolean;
+  deadline?: number;
 }
 
 /**
@@ -55,7 +55,6 @@ export async function executeV4Swap(
     amountIn,
     amountOut,
     fee,
-    recipient,
     isBuying,
   } = params;
 
@@ -83,31 +82,16 @@ export async function executeV4Swap(
   // Determine swap direction (zeroForOne)
   const zeroForOne = tokenIn.address < tokenOut.address;
 
-  // Create V4Planner instance for batching V4 operations
-  const v4Planner = new V4Planner();
-
-  // Create swap configuration for V4Planner
-  const swapConfig = {
-    poolKey,
-    zeroForOne,
-    amountIn: amountInWei.toString(),
-    amountOutMinimum: minAmountOut.toString(),
-    hookData: '0x00',
-  };
-
-  // Add V4 actions using official V4Planner
-  v4Planner.addAction(Actions.SWAP_EXACT_IN_SINGLE, [swapConfig]);
-  v4Planner.addAction(Actions.SETTLE_ALL, [poolKey.currency0, amountInWei.toString()]);
-  v4Planner.addAction(Actions.TAKE_ALL, [poolKey.currency1, minAmountOut.toString()]);
-
-  // Finalize V4 plan to get encoded actions
-  const encodedV4Actions = v4Planner.finalize();
-
   // Create RoutePlanner for Universal Router
   const routePlanner = new RoutePlanner();
-  
-  // Add V4_SWAP command to route planner
-  routePlanner.addCommand(CommandType.V4_SWAP, [encodedV4Actions]);
+    
+  routePlanner.addCommand(CommandType.V4_SWAP, [
+    poolKey,           // PoolKey structure
+    zeroForOne,        // Swap direction
+    amountInWei,       // Amount in (bigint)
+    minAmountOut,      // Minimum amount out (bigint)
+    '0x00'            // Hook data (empty for basic swaps)
+  ]);
 
   // Create Universal Router contract instance
   const universalRouter = new ethers.Contract(
@@ -127,7 +111,9 @@ export async function executeV4Swap(
       signer
     );
 
-    const allowance = await tokenContract.allowance(recipient, UNIVERSAL_ROUTER_ADDRESS);
+    // Get the actual account address from signer
+    const accountAddress = await signer.getAddress();
+    const allowance = await tokenContract.allowance(accountAddress, UNIVERSAL_ROUTER_ADDRESS);
     
     // Check if approval is needed (BigNumber comparison)
     if (allowance.lt(amountInWei)) {
@@ -137,16 +123,47 @@ export async function executeV4Swap(
   }
 
   // Execute swap through Universal Router using RoutePlanner
-  const tx = await universalRouter.execute(
-    routePlanner.commands,
-    routePlanner.inputs,
-    deadline,
-    {
-      value: isBuying ? amountInWei : 0,
+  
+  try {
+    const tx = await universalRouter.execute(
+      routePlanner.commands,  // Encoded commands
+      routePlanner.inputs,    // Encoded inputs
+      deadline,               // Transaction deadline
+      {
+        value: isBuying ? amountInWei : 0n,  // ETH value for buying (bigint)
+      }
+    );
+return tx;
+  } catch (error: any) {
+    console.error('V4 Execution Error:', error);
+    
+    // Try to provide more helpful error messages
+    if (error.code === 'UNPREDICTABLE_GAS_LIMIT') {
+      try {
+        const gasEstimate = await universalRouter.estimateGas.execute(
+          routePlanner.commands,
+          routePlanner.inputs,
+          deadline,
+          { value: isBuying ? amountInWei : 0n }
+        );
+        const tx = await universalRouter.execute(
+          routePlanner.commands,
+          routePlanner.inputs,
+          deadline,
+          {
+            value: isBuying ? amountInWei : 0n,
+            gasLimit: gasEstimate.mul(120).div(100) // 20% buffer
+          }
+        );
+        return tx;
+      } catch (gasError: any) {
+        console.error('V4 Gas estimation also failed:', gasError);
+        throw new Error(`V4 swap failed: ${gasError.message}`);
+      }
     }
-  );
-
-  return tx;
+    
+    throw error;
+  }
 }
 
 /**
