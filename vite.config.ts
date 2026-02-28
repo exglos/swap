@@ -1,30 +1,30 @@
-import path from "path";
-import tailwindcss from "@tailwindcss/vite";
-import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+import tailwindcss from "@tailwindcss/vite";
 import { nodePolyfills } from "vite-plugin-node-polyfills";
+import path from "path";
 
-export default defineConfig(({ command }) => ({
-  base: command === 'build' ? '/' : '/',
+export default defineConfig({
   plugins: [
-    react(),
-    tailwindcss(),
+    // 1. Polyfills go FIRST to ensure shims are available for other plugins
     nodePolyfills({
-      include: ['buffer', 'stream', 'util'],
+      include: ["buffer", "process", "util", "stream"],
       globals: {
         Buffer: true,
         global: true,
         process: true,
       },
     }),
+    react(),
+    tailwindcss(),
   ],
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
-      // Only keep essential aliases
     },
   },
+  // 3. Force Vite to pre-bundle these problematic dependencies
   optimizeDeps: {
-    include: ['ethers'],
-  }
-}));
+    include: ["sonner", "ethers", "buffer"],
+  },
+});
