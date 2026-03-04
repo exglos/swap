@@ -19,6 +19,8 @@ export interface V4PoolInfo {
   token0: Token;
   token1: Token;
   fee: number;
+  tickSpacing: number;
+  hooks: string;
   liquidity: string;
   hookData?: string;
 }
