@@ -1,7 +1,8 @@
 import { ethers } from 'ethers';
 import { Token } from '@uniswap/sdk-core';
+import { Actions, V4Planner } from '@uniswap/v4-sdk';
 import { CommandType, RoutePlanner } from '@uniswap/universal-router-sdk';
-import { UNIVERSAL_ROUTER_ADDRESS, UNIVERSAL_ROUTER_ABI, DEFAULT_SLIPPAGE } from './constants';
+import { UNIVERSAL_ROUTER_ADDRESS, UNIVERSAL_ROUTER_ABI, PERMIT2_ADDRESS, PERMIT2_ABI } from './constants';
 
 /**
  * V4 Universal Router Helper
@@ -53,7 +54,6 @@ export async function executeV4Swap(
     tokenIn,
     tokenOut,
     amountIn,
-    amountOut,
     fee,
     isBuying,
   } = params;
@@ -63,14 +63,12 @@ export async function executeV4Swap(
 
   // Parse amounts (convert BigNumber to bigint for v5)
   const amountInWei = BigInt(ethers.utils.parseUnits(amountIn, tokenIn.decimals).toString());
-  const amountOutWei = BigInt(ethers.utils.parseUnits(amountOut, tokenOut.decimals).toString());
   
-  // Calculate minimum amount out with slippage
-  const slippageTolerance = DEFAULT_SLIPPAGE / 10000; // 0.5%
-  const minAmountOut = amountOutWei - (amountOutWei * BigInt(Math.floor(slippageTolerance * 10000)) / 10000n);
+  // Calculate minimum amount out with slippage (use minAmountOut from params if provided)
+  const minAmountOut = params.minAmountOut 
+    ? BigInt(params.minAmountOut)
+    : BigInt(0); // Will be calculated from route if not provided
 
-  // Official V4Planner and RoutePlanner usage
-  // Create PoolKey (V4's pool identifier structure)
   const poolKey: PoolKey = {
     currency0: tokenIn.address < tokenOut.address ? tokenIn.address : tokenOut.address,
     currency1: tokenIn.address < tokenOut.address ? tokenOut.address : tokenIn.address,
@@ -82,16 +80,41 @@ export async function executeV4Swap(
   // Determine swap direction (zeroForOne)
   const zeroForOne = tokenIn.address < tokenOut.address;
 
-  // Create RoutePlanner for Universal Router
+  // Use official V4Planner from @uniswap/v4-sdk
+  const v4Planner = new V4Planner();
   const routePlanner = new RoutePlanner();
-    
-  routePlanner.addCommand(CommandType.V4_SWAP, [
-    poolKey,           // PoolKey structure
-    zeroForOne,        // Swap direction
-    amountInWei,       // Amount in (bigint)
-    minAmountOut,      // Minimum amount out (bigint)
-    '0x00'            // Hook data (empty for basic swaps)
+
+  // Add V4 actions in correct order per documentation
+  v4Planner.addAction(Actions.SWAP_EXACT_IN_SINGLE, [
+    {
+      poolKey,
+      zeroForOne,
+      amountIn: amountInWei.toString(),
+      amountOutMinimum: (minAmountOut || BigInt(0)).toString(),
+      hookData: '0x'
+    }
   ]);
+  
+  // SETTLE_ALL: Pay the input currency
+  // TAKE_ALL: Receive the output currency
+  // These depend on swap direction (zeroForOne)
+  const inputCurrency = zeroForOne ? poolKey.currency0 : poolKey.currency1;
+  const outputCurrency = zeroForOne ? poolKey.currency1 : poolKey.currency0;
+  
+  v4Planner.addAction(Actions.SETTLE_ALL, [
+    inputCurrency,
+    amountInWei.toString(),
+  ]);
+  v4Planner.addAction(Actions.TAKE_ALL, [
+    outputCurrency,
+    minAmountOut?.toString() || '0',
+  ]);
+
+  // Finalize V4 planner to get encoded actions
+  const encodedActions = v4Planner.finalize();
+
+  // Add V4_SWAP command to route planner with encoded actions
+  routePlanner.addCommand(CommandType.V4_SWAP, [encodedActions]);
 
   // Create Universal Router contract instance
   const universalRouter = new ethers.Contract(
@@ -100,64 +123,110 @@ export async function executeV4Swap(
     signer
   );
 
-  // Handle token approval for non-ETH swaps
+  // Handle token approval for non-ETH swaps using Permit2
   if (!isBuying) {
-    const tokenContract = new ethers.Contract(
-      tokenIn.address,
-      [
-        'function allowance(address owner, address spender) view returns (uint256)',
-        'function approve(address spender, uint256 amount) returns (bool)',
-      ],
-      signer
-    );
+    try {
+      const tokenContract = new ethers.Contract(
+        tokenIn.address,
+        [
+          'function allowance(address owner, address spender) view returns (uint256)',
+          'function approve(address spender, uint256 amount) returns (bool)',
+          'function balanceOf(address account) view returns (uint256)',
+        ],
+        signer
+      );
 
-    // Get the actual account address from signer
-    const accountAddress = await signer.getAddress();
-    const allowance = await tokenContract.allowance(accountAddress, UNIVERSAL_ROUTER_ADDRESS);
-    
-    // Check if approval is needed (BigNumber comparison)
-    if (allowance.lt(amountInWei)) {
-      const approveTx = await tokenContract.approve(UNIVERSAL_ROUTER_ADDRESS, amountInWei);
-      await approveTx.wait();
+      const accountAddress = await signer.getAddress();
+      
+      // Check token balance first
+      const balance = await tokenContract.balanceOf(accountAddress);
+      if (balance.lt(amountInWei)) {
+        throw new Error(
+          `Insufficient ${tokenIn.symbol} balance. ` +
+          `Have: ${ethers.utils.formatUnits(balance, tokenIn.decimals)} ${tokenIn.symbol}, ` +
+          `Need: ${ethers.utils.formatUnits(amountInWei, tokenIn.decimals)} ${tokenIn.symbol}`
+        );
+      }
+      
+      // Permit2 approval flow (recommended for V4)
+      const permit2Contract = new ethers.Contract(PERMIT2_ADDRESS, PERMIT2_ABI, signer);
+      
+      // Step 1: Check if Permit2 has approval from token contract
+      const permit2Allowance = await tokenContract.allowance(accountAddress, PERMIT2_ADDRESS);
+      if (permit2Allowance.lt(amountInWei)) {
+        const approveTx = await tokenContract.approve(PERMIT2_ADDRESS, ethers.constants.MaxUint256);
+        const receipt = await approveTx.wait();
+        
+        if (!receipt.status) {
+          throw new Error(`Permit2 approval failed for ${tokenIn.symbol}`);
+        }
+      }
+      
+      // Step 2: Check if Universal Router has approval from Permit2
+      const permit2Data = await permit2Contract.allowance(accountAddress, tokenIn.address, UNIVERSAL_ROUTER_ADDRESS);
+      const currentAllowance = permit2Data.amount;
+      const expiration = permit2Data.expiration;
+      
+      // Check if we need to approve or if approval expired
+      const now = Math.floor(Date.now() / 1000);
+      if (currentAllowance.lt(amountInWei) || expiration < now) {
+        // Set expiration to 30 days from now
+        const newExpiration = now + (30 * 24 * 60 * 60);
+        
+        // MAX_UINT160 for amount
+        const maxAmount = ethers.BigNumber.from(2).pow(160).sub(1);
+        
+        const permit2ApproveTx = await permit2Contract.approve(
+          tokenIn.address,
+          UNIVERSAL_ROUTER_ADDRESS,
+          maxAmount,
+          newExpiration
+        );
+        const receipt = await permit2ApproveTx.wait();
+        
+        if (!receipt.status) {
+          throw new Error(`Universal Router approval on Permit2 failed for ${tokenIn.symbol}`);
+        }
+      }
+    } catch (error: any) {
+      if (error.message.includes('Insufficient')) {
+        throw error;
+      }
+      throw new Error(`Permit2 approval failed: ${error.message}`);
     }
   }
 
-  // Execute swap through Universal Router using RoutePlanner
-  
+  // Execute swap through Universal Router using official SDK
+  const txOptions: any = isBuying ? { value: amountInWei.toString() } : {};
+
   try {
     const tx = await universalRouter.execute(
-      routePlanner.commands,  // Encoded commands
-      routePlanner.inputs,    // Encoded inputs
-      deadline,               // Transaction deadline
-      {
-        value: isBuying ? amountInWei : 0n,  // ETH value for buying (bigint)
-      }
+      routePlanner.commands,
+      routePlanner.inputs,
+      deadline,
+      txOptions
     );
-return tx;
+    return tx;
   } catch (error: any) {
-    console.error('V4 Execution Error:', error);
-    
-    // Try to provide more helpful error messages
     if (error.code === 'UNPREDICTABLE_GAS_LIMIT') {
       try {
         const gasEstimate = await universalRouter.estimateGas.execute(
           routePlanner.commands,
           routePlanner.inputs,
           deadline,
-          { value: isBuying ? amountInWei : 0n }
+          txOptions
         );
         const tx = await universalRouter.execute(
           routePlanner.commands,
           routePlanner.inputs,
           deadline,
           {
-            value: isBuying ? amountInWei : 0n,
-            gasLimit: gasEstimate.mul(120).div(100) // 20% buffer
+            ...txOptions,
+            gasLimit: gasEstimate.mul(120).div(100)
           }
         );
         return tx;
       } catch (gasError: any) {
-        console.error('V4 Gas estimation also failed:', gasError);
         throw new Error(`V4 swap failed: ${gasError.message}`);
       }
     }
