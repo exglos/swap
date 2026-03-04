@@ -59,7 +59,7 @@ export const TradeInterface = ({ provider, signer, account, onConnectWallet,read
 
   const tokenInfo = useToken(provider, readonlyProvider);
   const tradeState = useTrade(provider, signer);
-  const { txStatus, executeTrade } = useTradeExecution();
+  const { txStatus } = useTradeExecution();
   const { eth, weth, loading: balanceLoading } = useWalletBalances(provider, account);
   const wethHook = useWETH(signer);
 
@@ -142,21 +142,18 @@ export const TradeInterface = ({ provider, signer, account, onConnectWallet,read
   const handleTrade = async () => {
     if (!account || !tradeState.route) return;
     
-    // Create the execution promise
-    const tradePromise = executeTrade(account, isBuying, tradeState.executeTrade, () => {
-      setEthAmount('');
-      setTokenAmount('');
-      tradeState.clearTrade();
-    }, settings.slippage, settings.deadline);
+    // Create the execution promise using the multi-version trade executor
+    const tradePromise = tradeState.executeTrade(account, isBuying, settings.slippage, settings.deadline)
+      .then(tx => {
+        // Clear form on success
+        setEthAmount('');
+        setTokenAmount('');
+        tradeState.clearTrade();
+        return tx;
+      });
     
-    // Show transaction toast
+    // Show transaction toast (handles both success and error)
     showTransactionToast(tradePromise, `${isBuying ? 'Buy' : 'Sell'} ${displayTokenInfo.symbol}`);
-    
-    try {
-      await tradePromise;
-    } catch (error) {
-      // Error is already handled by the toast
-    }
   };
 
   // Check if user has enough balance for the trade
@@ -333,7 +330,7 @@ export const TradeInterface = ({ provider, signer, account, onConnectWallet,read
           <StatusMessage type={txStatus.type} message={txStatus.message} />
         </div>
       ) : null}
-      {tradeState.error ? (
+      {tradeState.error && !tradeState.route ? (
         <div className="mt-2">
           <StatusMessage type="error" message={tradeState.error} />
         </div>

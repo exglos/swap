@@ -45,7 +45,7 @@ export const TokenAddressInput = ({
             </p>
           </div>
           <div className="rounded-lg bg-uni-pink/10 border border-uni-pink/20 p-2">
-            <p className="text-xs text-uni-pink font-medium">Ready to trade on Uniswap V4/V3</p>
+            <p className="text-xs text-uni-pink font-medium">Ready to trade on Exglos</p>
           </div>
         </div>
       )}
