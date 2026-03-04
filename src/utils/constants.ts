@@ -10,9 +10,10 @@ export const V3_QUOTER_ADDRESS = '0xb27308f9F90D607463bb33eA1BeBb41C27CE5AB6';
 export const V3_POSITION_MANAGER_ADDRESS = '0xC36442b4a4522E871399CD717aBDD847Ab11FE88';
 
 export const V4_POOL_MANAGER_ADDRESS = '0x000000000004444c5dc75cB358380D2e3dE08A90';
-export const V4_STATE_VIEW_ADDRESS = '0x7ffe42c4a5deea5b0fec41c94c136cf115597227';
-export const V4_QUOTER_ADDRESS = '0x52f0e24d1c21c8a0cb1e5a5dd6198556bd9e1203';
-export const UNIVERSAL_ROUTER_ADDRESS = '0x66a9893cc07d91d95644aedd05d03f95e1dba8af';
+export const V4_STATE_VIEW_ADDRESS = '0x5601006584Ce31e515EAa77940733527d5603f01';
+export const V4_QUOTER_ADDRESS = '0x3972C00f7ed4885e145823eb7C655375d275A1C5';
+export const UNIVERSAL_ROUTER_ADDRESS = '0x66a9893cC07D91D95644AEDD05D03f95e1dBA8Af';
+export const PERMIT2_ADDRESS = '0x000000000022D473030F116dDEE9F6B43aC78BA3';
 
 export const DEFAULT_SLIPPAGE = 50; // 0.5% in basis points
 export const DEFAULT_DEADLINE = 20 * 60; // 20 minutes in seconds
@@ -71,4 +72,9 @@ export const V4_STATE_VIEW_ABI = [
 
 export const UNIVERSAL_ROUTER_ABI = [
   'function execute(bytes calldata commands, bytes[] calldata inputs, uint256 deadline) payable',
+];
+
+export const PERMIT2_ABI = [
+  'function approve(address token, address spender, uint160 amount, uint48 expiration) external',
+  'function allowance(address user, address token, address spender) external view returns (uint160 amount, uint48 expiration, uint48 nonce)',
 ];
