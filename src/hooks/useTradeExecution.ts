@@ -13,7 +13,7 @@ interface TradeExecutionState {
     onSuccess: () => void,
     slippage: number,
     deadline: number
-  ) => Promise<void>;
+  ) => Promise<ContractTransaction>;
 }
 
 export const useTradeExecution = (): TradeExecutionState => {
@@ -26,7 +26,7 @@ export const useTradeExecution = (): TradeExecutionState => {
     onSuccess: () => void,
     slippage: number,
     deadline: number
-  ) => {
+  ): Promise<ContractTransaction> => {
     setTxStatus({ type: 'loading', message: 'Preparing transaction...' });
 
     try {
@@ -39,10 +39,13 @@ export const useTradeExecution = (): TradeExecutionState => {
       onSuccess();
       
       setTimeout(() => setTxStatus(null), 5000);
+      
+      return tx; // Return the transaction for toast notifications
     } catch (error: unknown) {
       console.error('Trade error:', error);
       const message = error instanceof Error ? error.message : 'Transaction failed';
       setTxStatus({ type: 'error', message });
+      throw error; // Re-throw so toast can handle the error
     }
   };
 

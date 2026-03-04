@@ -217,7 +217,7 @@ export const useV3Trade = (
       isBuying: boolean,
       slippage: number,
       deadline: number
-    ): Promise<ethers.ContractTransaction> => {
+    ): Promise<ethers.providers.TransactionReceipt> => {
       if (!signer || !trade) {
         throw new Error('Wallet not connected or trade not calculated');
       }
@@ -260,20 +260,19 @@ export const useV3Trade = (
           if (balance.lt(amountIn)) {
             const shortage = amountIn.sub(balance);
             const symbol = trade.inputAmount.currency.symbol;
-            const message = 
+            throw new Error(
               `Insufficient ${symbol} balance.\n` +
               `Your balance: ${ethers.utils.formatUnits(balance, trade.inputAmount.currency.decimals)} ${symbol}\n` +
               `Required: ${trade.inputAmount.toExact()} ${symbol}\n` +
               `Shortage: ${ethers.utils.formatUnits(shortage, trade.inputAmount.currency.decimals)} ${symbol}\n\n` +
-              `Please buy more ${symbol} or use a smaller amount.`;
-            
-            throw new Error(message);
+              `Please buy more ${symbol} or use a smaller amount.`
+            );
           }
         } catch (balanceError: any) {
           if (balanceError.message.includes('Insufficient')) {
             throw balanceError;
           }
-          console.warn('Could not check token balance:', balanceError);
+          throw new Error(`Balance check failed: ${balanceError.message}`);
         }
       }
 
@@ -286,44 +285,38 @@ export const useV3Trade = (
         deadline: deadlineTime,
       });
 
-      // Create router contract instance for proper ContractTransactionResponse
-      const routerContract = new ethers.Contract(
-        V3_SWAP_ROUTER_ADDRESS,
-        ['function multicall(uint256 deadline, bytes[] calldata data) payable returns (bytes[] memory)'],
-        signer
-      );
-
+      // SwapRouter returns calldata that should be sent directly to the router
+      // The calldata already includes the function selector and encoded parameters
       if (isBuying) {
-        // For ETH buys, the trade.inputAmount should be the ETH amount
-        // Since we're buying tokens with ETH, inputAmount represents ETH
-        const value = ethers.utils.parseUnits(trade.inputAmount.toExact(), 18); // ETH always has 18 decimals
+        const value = ethers.BigNumber.from(trade.inputAmount.quotient.toString());
         
         try {
-          const tx = await routerContract.multicall(deadline, [methodParameters.calldata], { value });
-          return tx;
+          // Send the pre-encoded calldata directly to the router
+          const tx = await signer.sendTransaction({
+            to: V3_SWAP_ROUTER_ADDRESS,
+            data: methodParameters.calldata,
+            value: value,
+            gasLimit: 300000, // Reasonable limit for V3 swaps
+          });
+          const receipt = await tx.wait();
+          return receipt;
         } catch (error: any) {
           console.error('V3 Buy Error:', error);
           
-          // Handle UNPREDICTABLE_GAS_LIMIT with helpful error messages
+          // Handle UNPREDICTABLE_GAS_LIMIT
           if (error.code === 'UNPREDICTABLE_GAS_LIMIT') {
             const tokenSymbol = trade.outputAmount.currency.symbol;
-            
-            // Common causes of gas estimation failures
-            const possibleCauses = [
-              `Insufficient ${tokenSymbol} liquidity in the pool`,
-              `Slippage protection too tight (minimum output too high)`,
-              'Insufficient token approval for the router',
-              'Token balance too low for the swap',
-              'Pool price moved significantly during estimation'
-            ];
-            
             const helpfulMessage = 
               `Transaction simulation failed. This usually means:\n\n` +
-              possibleCauses.map((cause, i) => `${i + 1}. ${cause}`).join('\n') +
-              `\n\nTry:\n` +
+              `1. Insufficient ${tokenSymbol} liquidity in the pool\n` +
+              `2. Slippage protection too tight (minimum output too high)\n` +
+              `3. Insufficient token approval for the router\n` +
+              `4. Token balance too low for the swap\n` +
+              `5. Pool price moved significantly during estimation\n\n` +
+              `Try:\n` +
               `• Using a smaller amount\n` +
-              `• Increasing slippage tolerance\n` +
-              `• Checking your token balance and approvals`;
+              `• Increasing slippage tolerance to 1-2%\n` +
+              `• Checking your ETH balance (need ${trade.inputAmount.toExact()} ETH + gas)`;
             
             throw new Error(helpfulMessage);
           }
@@ -350,31 +343,31 @@ export const useV3Trade = (
         }
 
         try {
-          const tx = await routerContract.multicall(deadline, [methodParameters.calldata]);
-            return tx;
+          // Send the pre-encoded calldata directly to the router
+          const tx = await signer.sendTransaction({
+            to: V3_SWAP_ROUTER_ADDRESS,
+            data: methodParameters.calldata,
+            gasLimit: 300000, // Reasonable limit for V3 swaps
+          });
+          const receipt = await tx.wait();
+          return receipt;
         } catch (error: any) {
           console.error('V3 Sell Error:', error);
           
-          // Handle UNPREDICTABLE_GAS_LIMIT with helpful error messages
+          // Handle UNPREDICTABLE_GAS_LIMIT
           if (error.code === 'UNPREDICTABLE_GAS_LIMIT') {
             const tokenSymbol = trade.inputAmount.currency.symbol;
-            
-            // Common causes of gas estimation failures
-            const possibleCauses = [
-              `Insufficient ${tokenSymbol} balance for the swap`,
-              `Slippage protection too tight (minimum output too high)`,
-              'Insufficient token approval for the router',
-              'Low liquidity in the trading pool',
-              'Pool price moved significantly during estimation'
-            ];
-            
             const helpfulMessage = 
               `Transaction simulation failed. This usually means:\n\n` +
-              possibleCauses.map((cause, i) => `${i + 1}. ${cause}`).join('\n') +
-              `\n\nTry:\n` +
+              `1. Insufficient ${tokenSymbol} balance for the swap\n` +
+              `2. Slippage protection too tight (minimum output too high)\n` +
+              `3. Insufficient token approval for the router\n` +
+              `4. Low liquidity in the trading pool\n` +
+              `5. Pool price moved significantly during estimation\n\n` +
+              `Try:\n` +
               `• Using a smaller amount\n` +
-              `• Increasing slippage tolerance\n` +
-              `• Checking your token balance and approvals`;
+              `• Increasing slippage tolerance to 1-2%\n` +
+              `• Checking your ${tokenSymbol} balance (need ${trade.inputAmount.toExact()} ${tokenSymbol})`;
             
             throw new Error(helpfulMessage);
           }

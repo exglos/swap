@@ -3,7 +3,7 @@ import { ethers } from 'ethers';
 import { Token } from '@uniswap/sdk-core';
 import { useV3Trade } from './useV3Trade';
 import { useV4Trade } from './useV4Trade';
-import { CHAIN_ID, ERC20_ABI } from '@/utils/constants';
+import { CHAIN_ID, ERC20_ABI, WETH_ADDRESS } from '@/utils/constants';
 import type { MultiVersionTradeState } from '@/types/uniswap';
 
 export const useMultiVersionTrade = (
@@ -31,14 +31,39 @@ export const useMultiVersionTrade = (
       setState(prev => ({ ...prev, isCalculating: true, error: null }));
 
       try {
-        const tokenContract = new ethers.Contract(tokenAddress, ERC20_ABI, provider);
-        const [name, symbol, decimals] = await Promise.all([
-          tokenContract.name(),
-          tokenContract.symbol(),
-          tokenContract.decimals(),
-        ]);
+        // Handle Native ETH (address zero) - not an ERC20 contract
+        const NATIVE_ETH = '0x0000000000000000000000000000000000000000';
+        const isNativeEth = tokenAddress.toLowerCase() === NATIVE_ETH.toLowerCase();
+        const isWeth = tokenAddress.toLowerCase() === WETH_ADDRESS.toLowerCase();
+        
+        // WETH selected as trade token means user wants to trade WETH for ETH (wrap/unwrap)
+        // Skip V4 entirely and handle in V3 with the actual token
+        if (isWeth) {
+          // For WETH, skip V4 (it detects wrap) and go directly to V3 error handling
+          // WETH/ETH is a wrap operation, not a swap
+          setState({
+            primaryRoute: null,
+            fallbackRoute: null,
+            selectedRoute: null,
+            isCalculating: false,
+            error: 'WETH/ETH is a wrap/unwrap operation. Use the wrap function instead of swap.',
+            version: null,
+          });
+          return null;
+        }
 
-        const token = new Token(CHAIN_ID, tokenAddress, decimals, symbol, name);
+        let token: Token;
+        if (isNativeEth) {
+          token = new Token(CHAIN_ID, NATIVE_ETH, 18, 'ETH', 'Ethereum');
+        } else {
+          const tokenContract = new ethers.Contract(tokenAddress, ERC20_ABI, provider);
+          const [name, symbol, decimals] = await Promise.all([
+            tokenContract.name(),
+            tokenContract.symbol(),
+            tokenContract.decimals(),
+          ]);
+          token = new Token(CHAIN_ID, tokenAddress, decimals, symbol, name);
+        }
 
         // Try V4 first (now with Universal Router execution support)
         const v4Result = await v4Trade.calculateTrade(token, amount, isBuying);
@@ -75,7 +100,7 @@ export const useMultiVersionTrade = (
 
           throw new Error('No liquidity pools found on V4 or V3');
         } catch (v3Error: any) {
-          console.error('Both V4 and V3 failed:', v3Error);
+          console.debug('Both V4 and V3 failed:', v3Error.message);
           throw v3Error;
         }
       } catch (error: any) {

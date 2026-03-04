@@ -3,18 +3,19 @@ import { ethers } from 'ethers';
 import { Token } from '@uniswap/sdk-core';
 import { FeeAmount } from '@uniswap/v3-sdk';
 import { Pool } from '@uniswap/v4-sdk';
-import {
-  CHAIN_ID,
-  WETH_ADDRESS,
-  V4_STATE_VIEW_ADDRESS,
-  V4_STATE_VIEW_ABI,
-  V4_QUOTER_ADDRESS,
-  DEFAULT_SLIPPAGE,
-} from '@/utils/constants';
-import { calculatePriceImpact } from '@/utils/v4Math';
-import type { V4PoolInfo, V4TradeResult, TradeRoute } from '@/types/uniswap';
+import type { V4PoolInfo, TradeRoute, V4TradeResult } from '../types/uniswap';
+import { V4_QUOTER_ADDRESS, V4_STATE_VIEW_ADDRESS, WETH_ADDRESS, CHAIN_ID, V4_STATE_VIEW_ABI } from '../utils/constants';
+import { NATIVE_ETH_ADDRESS, getPoolConfig } from '../utils/v4PoolRegistry';
 
+const DEFAULT_SLIPPAGE = 50; // 0.5%
 
+// Persistent cache outside hook to prevent redundant RPC calls
+const POOL_CACHE: Record<string, V4PoolInfo | null> = {};
+const NOT_FOUND_CACHE: Record<string, number> = {};
+
+// Helper to create cache key
+const getCacheKey = (a: string, b: string) => 
+  [a.toLowerCase(), b.toLowerCase()].sort().join('-');
 
 interface V4TradeState {
   poolInfo: V4PoolInfo | null;
@@ -36,54 +37,102 @@ export const useV4Trade = (
 
   const findV4Pool = useCallback(
     async (tokenA: Token, tokenB: Token): Promise<V4PoolInfo | null> => {
-      if (!provider) {
-        console.error('V4: Provider is null');
+      if (!provider) return null;
+
+      const cacheKey = getCacheKey(tokenA.address, tokenB.address);
+      
+      // Check positive cache
+      if (POOL_CACHE[cacheKey] !== undefined) {
+        return POOL_CACHE[cacheKey];
+      }
+
+      // Check negative cache (avoid re-scanning recently failed lookups)
+      if (NOT_FOUND_CACHE[cacheKey] && Date.now() - NOT_FOUND_CACHE[cacheKey] < 60000) {
         return null;
       }
 
       try {
-        const stateView = new ethers.Contract(
-          V4_STATE_VIEW_ADDRESS,
-          V4_STATE_VIEW_ABI,
-          provider
-        );
+        const stateView = new ethers.Contract(V4_STATE_VIEW_ADDRESS, V4_STATE_VIEW_ABI, provider);
         
-        const feeTiers = [FeeAmount.MEDIUM, FeeAmount.LOW, FeeAmount.HIGH, FeeAmount.LOWEST];
-        const feeToTickSpacing: Record<number, number> = {
-          [FeeAmount.LOWEST]: 1,    // 0.01% fee
-          [FeeAmount.LOW]: 10,     // 0.05% fee  
-          [FeeAmount.MEDIUM]: 60,   // 0.3% fee
-          [FeeAmount.HIGH]: 200,    // 1% fee
-        };
-        
-        for (const fee of feeTiers) {
-          try {
-            const tickSpacing = feeToTickSpacing[fee];
-            const currency0 = tokenA.address.toLowerCase() < tokenB.address.toLowerCase() ? tokenA : tokenB;
-            const currency1 = tokenA.address.toLowerCase() < tokenB.address.toLowerCase() ? tokenB : tokenA;
-            const poolId = Pool.getPoolId(currency0, currency1, fee, tickSpacing, ethers.constants.AddressZero);
+        // Sort tokens for consistent pool ID computation
+        const [sorted0, sorted1] = tokenA.address.toLowerCase() < tokenB.address.toLowerCase()
+          ? [tokenA, tokenB]
+          : [tokenB, tokenA];
 
+        // STRATEGY 1: Check pre-computed registry for common pairs
+        const registryConfig = getPoolConfig(tokenA.address, tokenB.address);
+        if (registryConfig) {
+          try {
+            const poolId = Pool.getPoolId(sorted0, sorted1, registryConfig.fee, registryConfig.tickSpacing, registryConfig.hooks);
             const liquidity = await stateView.getLiquidity(poolId);
-            
-            if (liquidity > 0n) {
-              return {
-                poolAddress: poolId, 
-                token0: tokenA,
-                token1: tokenB,
-                fee,
+            if (liquidity.gt(0)) {
+              const poolInfo: V4PoolInfo = {
+                poolAddress: poolId,
+                token0: sorted0,
+                token1: sorted1,
+                fee: registryConfig.fee,
+                tickSpacing: registryConfig.tickSpacing,
+                hooks: registryConfig.hooks,
                 liquidity: liquidity.toString(),
-                hookData: ethers.constants.HashZero,
+                hookData: '0x',
               };
+              POOL_CACHE[cacheKey] = poolInfo;
+              return poolInfo;
             }
-          } catch (error) {
-            console.error(`Error checking V4 pool for fee ${fee}:`, error);
+          } catch {
+            // Registry pool not accessible, continue to probing
+          }
+        }
+        
+        // STRATEGY 2: Quick StateView probes for common fee tiers (no event scanning)
+        const TIER_CONFIGS = [
+          { fee: FeeAmount.LOW, tickSpacing: 10 },
+          { fee: FeeAmount.MEDIUM, tickSpacing: 60 },
+          { fee: FeeAmount.HIGH, tickSpacing: 200 },
+          { fee: FeeAmount.LOWEST, tickSpacing: 1 },
+        ];
+        
+        for (const tier of TIER_CONFIGS) {
+          try {
+            const poolId = Pool.getPoolId(sorted0, sorted1, tier.fee, tier.tickSpacing, ethers.constants.AddressZero);
+            const liquidity = await stateView.getLiquidity(poolId);
+            if (liquidity.gt(0)) {
+              const poolInfo: V4PoolInfo = {
+                poolAddress: poolId,
+                token0: sorted0,
+                token1: sorted1,
+                fee: tier.fee,
+                tickSpacing: tier.tickSpacing,
+                hooks: ethers.constants.AddressZero,
+                liquidity: liquidity.toString(),
+                hookData: '0x',
+              };
+              POOL_CACHE[cacheKey] = poolInfo;
+              return poolInfo;
+            }
+          } catch {
             continue;
           }
         }
-
-return null;
-      } catch (error) {
-        console.error('Error finding V4 pool:', error);
+        
+        // STRATEGY 3: If one token is WETH, also try Native ETH
+        if (tokenA.address.toLowerCase() === WETH_ADDRESS.toLowerCase() || 
+            tokenB.address.toLowerCase() === WETH_ADDRESS.toLowerCase()) {
+          const nativeToken = new Token(CHAIN_ID, NATIVE_ETH_ADDRESS, 18, 'ETH', 'Ethereum');
+          const otherToken = tokenA.address.toLowerCase() === WETH_ADDRESS.toLowerCase() ? tokenB : tokenA;
+          const nativePool = await findV4Pool(nativeToken, otherToken);
+          if (nativePool) {
+            POOL_CACHE[cacheKey] = nativePool;
+            return nativePool;
+          }
+        }
+        
+        // Mark as not found to avoid re-scanning
+        NOT_FOUND_CACHE[cacheKey] = Date.now();
+        POOL_CACHE[cacheKey] = null;
+        return null;
+      } catch {
+        NOT_FOUND_CACHE[cacheKey] = Date.now();
         return null;
       }
     },
@@ -103,11 +152,17 @@ return null;
       setTradeState(prev => ({ ...prev, isCalculating: true, error: null }));
 
       try {
-        const NATIVE_ETH_ADDRESS = '0x0000000000000000000000000000000000000000';
-        const ethToken = new Token(CHAIN_ID, NATIVE_ETH_ADDRESS, 18, 'ETH', 'Ethereum');
+        // V4 pools use Native ETH (0x000...0), not WETH
+        const ethToken = new Token(token.chainId, NATIVE_ETH_ADDRESS, 18, 'ETH', 'Ethereum');
         
+        // Check if trying to trade ETH with itself
+        if (token.address.toLowerCase() === NATIVE_ETH_ADDRESS.toLowerCase()) {
+          throw new Error('Cannot trade ETH with itself. Please select a different token.');
+        }
+        
+        // Check for ETH/WETH wrap (no pool needed, 1:1 ratio)
         if (token.address.toLowerCase() === WETH_ADDRESS.toLowerCase()) {
-          throw new Error('Cannot trade WETH with itself. Please select a different token.');
+          throw new Error('ETH/WETH is a wrap operation, not a swap. Use V3 or wrap directly.');
         }
         
         const [tokenIn, tokenOut] = isBuying ? [ethToken, token] : [token, ethToken];
@@ -115,14 +170,8 @@ return null;
         const poolInfo = await findV4Pool(tokenIn, tokenOut);
 
         if (!poolInfo) {
-          throw new Error(`No V4 pool found for ${token.symbol}/WETH. V4 is still in early deployment - try V3 pools instead.`);
+          throw new Error(`No V4 pool found for ${token.symbol}/ETH. Falling back to V3.`);
         }
-
-        const stateView = new ethers.Contract(
-          V4_STATE_VIEW_ADDRESS,
-          V4_STATE_VIEW_ABI,
-          provider
-        );
 
         const V4_QUOTER_ABI = [
           'function quoteExactInputSingle((address currency0, address currency1, uint24 fee, int24 tickSpacing, address hooks) poolKey, bool zeroForOne, uint128 exactAmount, bytes hookData) external returns (uint256 amountOut, uint256 gasEstimate)',
@@ -131,109 +180,61 @@ return null;
 
         const quoter = new ethers.Contract(V4_QUOTER_ADDRESS, V4_QUOTER_ABI, provider);
 
-        const feeToTickSpacing: Record<number, number> = {
-          [FeeAmount.LOWEST]: 1,    // 0.01% fee
-          [FeeAmount.LOW]: 10,     // 0.05% fee  
-          [FeeAmount.MEDIUM]: 60,   // 0.3% fee
-          [FeeAmount.HIGH]: 200,    // 1% fee
-        };
-        
+        // Build poolKey for quoter - MUST match the discovered pool exactly
         const poolKey = {
           currency0: tokenIn.address < tokenOut.address ? tokenIn.address : tokenOut.address,
           currency1: tokenIn.address < tokenOut.address ? tokenOut.address : tokenIn.address,
           fee: poolInfo.fee,
-          tickSpacing: feeToTickSpacing[poolInfo.fee],
-          hooks: ethers.constants.AddressZero,
+          tickSpacing: poolInfo.tickSpacing,
+          hooks: poolInfo.hooks,
         };
 
         const zeroForOne = tokenIn.address < tokenOut.address;
         const amountInWei = ethers.utils.parseUnits(amount, tokenIn.decimals);
 
+        // V4 Quoter uses revert-to-data pattern to save gas
+        const V4_QUOTE_SELECTOR = '0x07469600';
         
-        const QUOTE_SWAP_SELECTOR = '0x3d0370d3';
-        let quotedAmount: { amountOut: ethers.BigNumber; gasEstimate: ethers.BigNumber } = {
-          amountOut: ethers.BigNumber.from(0),
-          gasEstimate: ethers.BigNumber.from(0)
-        };
+        let quotedAmount: ethers.BigNumber = ethers.BigNumber.from(0);
         
         try {
           await quoter.callStatic.quoteExactInputSingle(poolKey, zeroForOne, amountInWei, '0x');
+          throw new Error('Quoter did not revert as expected');
         } catch (quoterError: any) {
-          const revertData = quoterError.data || quoterError.error?.data || quoterError.error?.error?.data;
-
-          if (revertData && revertData.includes(QUOTE_SWAP_SELECTOR)) {
+          let revertData = quoterError.data || quoterError.error?.data || quoterError.message;
+          
+          if (revertData && typeof revertData === 'object' && revertData.originalError) {
+            revertData = revertData.originalError.data;
+          }
+          
+          if (typeof revertData === 'string' && revertData.includes(V4_QUOTE_SELECTOR)) {
             try {
-              const selectorIndex = revertData.indexOf(QUOTE_SWAP_SELECTOR.slice(2));
-              if (selectorIndex !== -1) {
-                const decoded = ethers.utils.defaultAbiCoder.decode(
-                  ['uint256'], 
-                  '0x' + revertData.slice(selectorIndex + 8)
-                );
-                quotedAmount = { 
-                  amountOut: decoded[0],
-                  gasEstimate: ethers.BigNumber.from(0)
-                };
-                
-                              } else {
-                throw new Error("QuoteSwap selector not found in revert data");
-              }
-            } catch (decodeError: any) {
-              console.error('V4: Failed to decode QuoteSwap error:', decodeError);
-              throw new Error("V4 Quoter failed: Could not decode quote result");
+              const hexData = revertData.substring(revertData.indexOf(V4_QUOTE_SELECTOR));
+              const decoded = ethers.utils.defaultAbiCoder.decode(
+                ['uint256', 'uint256', 'uint24'],
+                ethers.utils.hexDataSlice(hexData, 4)
+              );
+              quotedAmount = decoded[0];
+            } catch {
+              throw new Error(`V4 quoter data decode failed for ${token.symbol}/ETH. Falling back to V3.`);
             }
           } else {
-            if (poolInfo && poolInfo.liquidity && poolInfo.liquidity !== '0') {
-              try {
-                // Get current slot0 data to calculate spot price
-                const slot0 = await stateView.getSlot0(poolInfo.poolAddress);
-                const sqrtPriceX96 = slot0.sqrtPriceX96;
-                
-                // Convert sqrtPriceX96 to human readable price
-                // sqrtPriceX96 represents sqrt(price) * 2^96
-                const price = (Number(sqrtPriceX96) / (2**96))**2;
-                
-                // Calculate approximate output (this is just for display, not for actual trading)
-                const amountOutWei = ethers.BigNumber.from(amountInWei)
-                  .mul(ethers.utils.parseUnits(price.toString(), tokenOut.decimals))
-                  .div(ethers.utils.parseUnits("1", tokenIn.decimals));
-                
-                quotedAmount = { 
-                  amountOut: amountOutWei,
-                  gasEstimate: ethers.BigNumber.from(0)
-                };
-                
-              } catch (slot0Error: any) {
-throw new Error("Price is out of range. Please try V3 fallback.");
-              }
-            } else {
-              throw new Error("V4 Quoter failed: No liquidity or path found. Falling back to V3 pools...");
-            }
+            throw new Error(`V4 pool found but quoter failed for ${token.symbol}/ETH. Falling back to V3.`);
           }
         }
 
-        const amountOutWei = quotedAmount.amountOut;
-
-        const outputAmount = ethers.utils.formatUnits(amountOutWei, tokenOut.decimals);
-        
-        // Calculate slippage and minimum received
+        const outputAmount = ethers.utils.formatUnits(quotedAmount, tokenOut.decimals);
         const slippageAmount = (parseFloat(outputAmount) * (DEFAULT_SLIPPAGE / 10000));
         const minimumReceived = (parseFloat(outputAmount) - slippageAmount).toFixed(6);
 
-        // Calculate execution price
         const inputFloat = parseFloat(amount);
         const outputFloat = parseFloat(outputAmount);
         const executionPrice = isBuying 
           ? (inputFloat / outputFloat).toFixed(6)
           : (outputFloat / inputFloat).toFixed(6);
 
-        // Calculate accurate price impact using StateView
-        const slot0Before = await stateView.getSlot0(poolInfo.poolAddress);
-        const sqrtPriceBefore = slot0Before[0];
+        const priceImpact = '0.00';
         
-        // Estimate price after swap (simplified - in full production, simulate the swap)
-        const priceImpactPercent = calculatePriceImpact(sqrtPriceBefore, sqrtPriceBefore);
-        const priceImpact = priceImpactPercent.toFixed(2);
-
         const feeTier = poolInfo.fee === FeeAmount.LOWEST ? '0.01%'
           : poolInfo.fee === FeeAmount.LOW ? '0.05%'
           : poolInfo.fee === FeeAmount.MEDIUM ? '0.3%'
@@ -265,7 +266,6 @@ throw new Error("Price is out of range. Please try V3 fallback.");
           poolAddress: poolInfo.poolAddress,
         };
       } catch (error: any) {
-        console.error('V4 trade calculation error:', error);
         setTradeState(prev => ({
           ...prev,
           isCalculating: false,
@@ -285,27 +285,23 @@ throw new Error("Price is out of range. Please try V3 fallback.");
       isBuying: boolean,
       slippage: number,
       deadline: number
-    ): Promise<ethers.ContractTransaction> => {
+    ): Promise<ethers.providers.TransactionReceipt> => {
       if (!signer || !poolInfo || !route) {
         throw new Error('Wallet not connected or trade not calculated');
       }
 
-      // Import the Universal Router helper
       const { executeV4Swap } = await import('@/utils/v4UniversalRouter');
 
-      // Prepare token objects
+      const WETH_ADDRESS = '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2';
       const wethToken = new Token(CHAIN_ID, WETH_ADDRESS, 18, 'WETH', 'Wrapped Ether');
       const [tokenIn, tokenOut] = isBuying 
         ? [wethToken, poolInfo.token1] 
         : [poolInfo.token0, wethToken];
 
-      // Calculate minimum amount out with slippage
-      const slippageBips = Math.floor(slippage * 100); // Convert percentage to basis points
+      const slippageBips = Math.floor(slippage * 100);
       const amountOutBN = ethers.utils.parseUnits(route.outputAmount, tokenOut.decimals);
       const minAmountOut = amountOutBN.mul(10000 - slippageBips).div(10000);
-      
-      
-      // Execute swap through Universal Router
+
       const tx = await executeV4Swap(
         {
           tokenIn,
@@ -314,14 +310,15 @@ throw new Error("Price is out of range. Please try V3 fallback.");
           amountOut: route.outputAmount,
           minAmountOut: minAmountOut.toString(),
           fee: poolInfo.fee,
-          poolId: poolInfo.poolAddress, // In V4, this is the poolId hash
+          poolId: poolInfo.poolAddress,
           isBuying,
-          deadline: Math.floor(Date.now() / 1000) + (deadline * 60), // Convert minutes to seconds
+          deadline: Math.floor(Date.now() / 1000) + (deadline * 60),
         },
         signer
       );
 
-      return tx;
+      const receipt = await tx.wait();
+      return receipt;
     },
     [signer]
   );
