@@ -4,7 +4,11 @@ export const showTransactionToast = (promise: Promise<any>, description?: string
   return toast.promise(promise, {
     loading: description ? `Sending transaction: ${description}` : 'Sending transaction...',
     success: (tx: any) => {
-      const hash = tx.hash.slice(0, 10) + '...' + tx.hash.slice(-8);
+      if (!tx || (!tx.hash && !tx.transactionHash)) {
+        return 'Transaction Confirmed!';
+      }
+      // TransactionReceipt uses transactionHash, ContractTransaction uses hash
+      const hash = (tx.transactionHash || tx.hash).slice(0, 10) + '...' + (tx.transactionHash || tx.hash).slice(-8);
       return `Transaction Confirmed! ${hash} - View on Etherscan`;
     },
     error: (err: any) => {
@@ -34,7 +38,11 @@ export const showWrapToast = (promise: Promise<any>, amount: string, operation: 
   return toast.promise(promise, {
     loading: `${operationText} ${amount} ETH...`,
     success: (tx: any) => {
-      const hash = tx.hash.slice(0, 10) + '...' + tx.hash.slice(-8);
+      if (!tx || (!tx.hash && !tx.transactionHash)) {
+        return `${operationText} Successful! ${amount} ETH → ${amount} ${operation === 'wrap' ? 'WETH' : 'ETH'}`;
+      }
+      // TransactionReceipt uses transactionHash, ContractTransaction uses hash
+      const hash = (tx.transactionHash || tx.hash).slice(0, 10) + '...' + (tx.transactionHash || tx.hash).slice(-8);
       return `${operationText} Successful! ${amount} ETH → ${amount} ${operation === 'wrap' ? 'WETH' : 'ETH'} - ${hash}`;
     },
     error: (err: any) => {
