@@ -3,6 +3,13 @@ import { ethers } from 'ethers';
 import { Token } from '@uniswap/sdk-core';
 import { CHAIN_ID, ERC20_ABI } from '@/utils/constants';
 
+// Multicall3 Address is the same on almost all chains: 0xcA11bde05977b3631167028862bE2a173976CA11
+const MULTICALL_ADDRESS = '0xcA11bde05977b3631167028862bE2a173976CA11';
+const MULTICALL_ABI = [
+  'function aggregate(tuple(address target, bytes callData)[] calls) view returns (uint256 blockNumber, bytes[] returnData)'
+];
+const TOKEN_METADATA_TIMEOUT_MS = 12000;
+
 interface TokenInfo {
   token: Token | null;
   name: string;
@@ -14,13 +21,12 @@ interface TokenInfo {
 }
 
 export const useToken = (provider: ethers.providers.Web3Provider | null, readOnlyProvider: ethers.providers.JsonRpcProvider) => {
-
   const [tokenInfo, setTokenInfo] = useState<TokenInfo>({
     token: null,
     name: '',
     symbol: '',
-    decimals: 0,
-    hasLiquidity: true,
+    decimals: 18,
+    hasLiquidity: false,
     isLoading: false,
     error: null,
   });
@@ -42,9 +48,8 @@ export const useToken = (provider: ethers.providers.Web3Provider | null, readOnl
 
     try {
       // Handle Native ETH (address zero) - not an ERC20 contract
-      const NATIVE_ETH = '0x0000000000000000000000000000000000000000';
-      if (tokenAddress.toLowerCase() === NATIVE_ETH.toLowerCase()) {
-        const token = new Token(CHAIN_ID, NATIVE_ETH, 18, 'ETH', 'Ethereum');
+      if (tokenAddress === ethers.constants.AddressZero) {
+        const token = new Token(CHAIN_ID, tokenAddress, 18, 'ETH', 'Ethereum');
         setTokenInfo({
           token,
           name: 'Ethereum',
@@ -57,46 +62,45 @@ export const useToken = (provider: ethers.providers.Web3Provider | null, readOnl
         return;
       }
 
-      // Basic address validation - fail fast for invalid addresses
-      if (!ethers.utils.isAddress(tokenAddress)) {
-        throw new Error('Invalid token address format. Please check the address and try again.');
-      }
-
+      const erc20Interface = new ethers.utils.Interface(ERC20_ABI);
       const tokenContract = new ethers.Contract(tokenAddress, ERC20_ABI, defaultProvider);
-      
-      const timeoutPromise = new Promise((_, reject) => 
-        setTimeout(() => reject(new Error('Token info request timed out after 5 seconds')), 5000)
-      );
 
-      let name, symbol, decimals;
-      let attempts = 0;
-      const maxAttempts = 1; // Fast fail - if it times out once, the token is likely invalid
-      
-      while (attempts < maxAttempts) {
+      const readTokenMetadata = async () => {
+        const multicall = new ethers.Contract(MULTICALL_ADDRESS, MULTICALL_ABI, defaultProvider);
+        const calls = [
+          { target: tokenAddress, callData: erc20Interface.encodeFunctionData('name') },
+          { target: tokenAddress, callData: erc20Interface.encodeFunctionData('symbol') },
+          { target: tokenAddress, callData: erc20Interface.encodeFunctionData('decimals') },
+        ];
+
+        const timeoutPromise = new Promise((_, reject) =>
+          setTimeout(() => reject(new Error('Multicall timed out')), TOKEN_METADATA_TIMEOUT_MS)
+        );
+
         try {
-          [name, symbol, decimals] = await Promise.race([
-            Promise.all([
-              tokenContract.name().catch(() => { throw new Error('Failed to fetch token name'); }),
-              tokenContract.symbol().catch(() => { throw new Error('Failed to fetch token symbol'); }),
-              tokenContract.decimals().catch(() => { throw new Error('Failed to fetch token decimals'); })
-            ]),
-            timeoutPromise.then(() => {
-              throw new Error('Token info request timed out after 5 seconds');
-            })
+          const [, returnData] = await Promise.race([
+            multicall.aggregate(calls),
+            timeoutPromise
+          ]) as [any, string[]];
+
+          return {
+            name: erc20Interface.decodeFunctionResult('name', returnData[0])[0],
+            symbol: erc20Interface.decodeFunctionResult('symbol', returnData[1])[0],
+            decimals: erc20Interface.decodeFunctionResult('decimals', returnData[2])[0],
+          };
+        } catch (multicallError) {
+          console.warn('Token multicall failed, falling back to direct ERC20 reads:', multicallError);
+          const [name, symbol, decimals] = await Promise.all([
+            tokenContract.name(),
+            tokenContract.symbol(),
+            tokenContract.decimals(),
           ]);
-          break; // Success, exit retry loop
-        } catch (raceError: any) {
-          attempts++;
-          if (attempts >= maxAttempts) {
-            if (raceError.message.includes('timed out')) {
-              throw new Error('Token address appears to be invalid or the contract is not responding. Please check the token address and try again.');
-            }
-            throw raceError;
-          }
-          // Wait a bit before retry (exponential backoff)
-          await new Promise(resolve => setTimeout(resolve, 1000 * attempts));
+
+          return { name, symbol, decimals };
         }
-      }
+      };
+
+      const { name, symbol, decimals } = await readTokenMetadata();
 
       // Validate decimals
       const decimalsNum = Number(decimals);
@@ -125,34 +129,14 @@ export const useToken = (provider: ethers.providers.Web3Provider | null, readOnl
         isLoading: false,
         error: null,
       });
-    } catch (error: any) {
-      console.error('Error fetching token info:', error);
-      
-      let errorMessage = 'Failed to fetch token information';
-      
-      // Provide specific error messages based on common issues
-      if (error.code === 'CALL_EXCEPTION') {
-        errorMessage = 'Contract does not exist or is not a valid ERC20 token.\n\nPlease verify:\n• Token address is correct\n• Contract exists on this network\n• Token follows ERC20 standard';
-      } else if (error.code === 'NETWORK_ERROR') {
-        errorMessage = 'Network error. Please check your connection and try again';
-      } else if (error.message?.includes('timed out')) {
-        errorMessage = error.message; // Use the detailed timeout message we created
-      } else if (error.message?.includes('Invalid token')) {
-        errorMessage = error.message;
-      } else if (error.message?.includes('Failed to fetch')) {
-        errorMessage = `Unable to read token contract data.\n\nThis usually means:\n• Invalid token address\n• Contract on wrong network\n• Token contract is not accessible\n\nPlease check the token address and try again.`;
-      } else if (error.message) {
-        errorMessage = error.message;
-      }
 
+    } catch (error: any) {
+      console.error('Token metadata error:', error);
       setTokenInfo(prev => ({
         ...prev,
         isLoading: false,
-        error: errorMessage,
+        error: `Failed to fetch token. Ensure you are on the correct network. ${error.message || error}`,
         token: null,
-        name: '',
-        symbol: '',
-        decimals: 0,
       }));
     }
   }, [provider, readOnlyProvider]);
@@ -162,8 +146,8 @@ export const useToken = (provider: ethers.providers.Web3Provider | null, readOnl
       token: null,
       name: '',
       symbol: '',
-      decimals: 0,
-      hasLiquidity: true,
+      decimals: 18,
+      hasLiquidity: false,
       isLoading: false,
       error: null,
     });

@@ -5,12 +5,12 @@ interface SwapButtonProps {
   canTrade: boolean;
   isCalculating: boolean;
   tokenAddress: string;
+  outputTokenAddress: string;
   isLoading: boolean;
   hasLiquidity?: boolean;
-  isBuying: boolean;
-  ethAmount: string;
-  tokenAmount: string;
+  amount: string;
   tokenSymbol?: string | null;
+  error?: string | null;
   onClick: () => void;
 }
 
@@ -19,22 +19,23 @@ export const SwapButton = ({
   canTrade,
   isCalculating,
   tokenAddress,
+  outputTokenAddress,
   isLoading,
   hasLiquidity,
-  isBuying,
-  ethAmount,
-  tokenAmount,
+  amount,
   tokenSymbol,
+  error,
   onClick,
 }: SwapButtonProps) => {
   const getButtonText = () => {
     if (!account) return 'Get started';
-    if (!tokenAddress) return 'Enter token address';
-    if (isLoading) return 'Loading...';
-    if (!hasLiquidity && tokenSymbol) return 'No liquidity';
-    if (isCalculating) return 'Calculating...';
-    if (isBuying && !ethAmount) return 'Enter amount';
-    if (!isBuying && !tokenAmount) return 'Enter amount';
+    if (!tokenAddress) return 'Select sell token';
+    if (!outputTokenAddress) return 'Select buy token';
+    if (!amount) return 'Enter amount';
+    if (isLoading) return 'Loading token...';
+    if (isCalculating) return 'Finding route...';
+    if (error) return 'Route unavailable';
+    if (!hasLiquidity && tokenSymbol) return 'Awaiting quote';
     return 'Swap';
   };
 

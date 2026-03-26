@@ -1,19 +1,21 @@
 import { useState, useCallback } from 'react';
 import { ethers } from 'ethers';
 import { Token, CurrencyAmount, TradeType, Percent } from '@uniswap/sdk-core';
-import { Pool, Route, Trade, SwapRouter, FeeAmount } from '@uniswap/v3-sdk';
+import { Pool, Route, Trade, SwapRouter, FeeAmount, encodeRouteToPath } from '@uniswap/v3-sdk';
 import {
-  CHAIN_ID,
-  WETH_ADDRESS,
+  V3_FACTORY_ADDRESS,
   V3_SWAP_ROUTER_ADDRESS,
   V3_QUOTER_ADDRESS,
+  V3_FACTORY_ABI,
   V3_POOL_ABI,
   ERC20_ABI,
   DEFAULT_SLIPPAGE,
   MIN_LIQUIDITY_THRESHOLD,
+  WETH_ADDRESS,
 } from '@/utils/constants';
 import { calculateDeadline } from '@/utils/helpers';
 import type { V3PoolInfo, V3TradeResult, TradeRoute } from '@/types/uniswap';
+import { getRouteBridgeTokens } from '@/utils/routeTokens';
 
 interface V3TradeState {
   trade: Trade<Token, Token, TradeType> | null;
@@ -23,9 +25,17 @@ interface V3TradeState {
   error: string | null;
 }
 
+interface V3RouteCandidate {
+  route: Route<Token, Token>;
+  trade: Trade<Token, Token, TradeType>;
+  pools: V3PoolInfo[];
+  quotedAmountOut: ethers.BigNumber;
+}
+
 export const useV3Trade = (
   provider: ethers.providers.Web3Provider | null,
-  signer: ethers.Signer | null
+  signer: ethers.Signer | null,
+  readOnlyProvider: ethers.providers.JsonRpcProvider
 ) => {
   const [tradeState, setTradeState] = useState<V3TradeState>({
     trade: null,
@@ -35,24 +45,27 @@ export const useV3Trade = (
     error: null,
   });
 
-  const findBestPool = useCallback(
+  const findPool = useCallback(
     async (tokenA: Token, tokenB: Token): Promise<V3PoolInfo | null> => {
       if (!provider) {
-        return null;
+        if (!readOnlyProvider) {
+          return null;
+        }
       }
+      const quoteProvider = provider ?? readOnlyProvider;
 
+      const factory = new ethers.Contract(V3_FACTORY_ADDRESS, V3_FACTORY_ABI, quoteProvider);
       const feeTiers = [FeeAmount.MEDIUM, FeeAmount.LOW, FeeAmount.HIGH, FeeAmount.LOWEST];
 
       for (const fee of feeTiers) {
         try {
-          // Use official V3 SDK method to compute pool address
-          const poolAddress = Pool.getAddress(tokenA, tokenB, fee);
+          const poolAddress = await factory.getPool(tokenA.address, tokenB.address, fee);
           
           if (poolAddress === ethers.constants.AddressZero) {
             continue;
           }
 
-          const poolContract = new ethers.Contract(poolAddress, V3_POOL_ABI, provider);
+          const poolContract = new ethers.Contract(poolAddress, V3_POOL_ABI, quoteProvider);
           
           const [token0, , liquidity, slot0] = await Promise.all([
             poolContract.token0(),
@@ -96,92 +109,152 @@ export const useV3Trade = (
 
       return null;
     },
-    [provider]
+    [provider, readOnlyProvider]
+  );
+
+  const buildRouteCandidate = useCallback(
+    async (pathTokens: Token[], amount: string): Promise<V3RouteCandidate | null> => {
+      if (!(provider || readOnlyProvider) || pathTokens.length < 2) {
+        return null;
+      }
+      const quoteProvider = provider ?? readOnlyProvider;
+
+      const pools: V3PoolInfo[] = [];
+      for (let i = 0; i < pathTokens.length - 1; i++) {
+        const pool = await findPool(pathTokens[i], pathTokens[i + 1]);
+        if (!pool) {
+          return null;
+        }
+        pools.push(pool);
+      }
+
+      const route = new Route(pools.map(pool => pool.pool), pathTokens[0], pathTokens[pathTokens.length - 1]);
+      const amountIn = CurrencyAmount.fromRawAmount(
+        pathTokens[0],
+        ethers.utils.parseUnits(amount, pathTokens[0].decimals).toString()
+      );
+      const quoter = new ethers.Contract(
+        V3_QUOTER_ADDRESS,
+        ['function quoteExactInput(bytes path, uint256 amountIn) external returns (uint256 amountOut)'],
+        quoteProvider
+      );
+      const encodedPath = encodeRouteToPath(route, false);
+      const quotedAmountOut = await quoter.callStatic.quoteExactInput(
+        encodedPath,
+        amountIn.quotient.toString()
+      );
+      const outputAmount = CurrencyAmount.fromRawAmount(
+        pathTokens[pathTokens.length - 1],
+        quotedAmountOut.toString()
+      );
+      const trade = Trade.createUncheckedTrade({
+        route,
+        inputAmount: amountIn,
+        outputAmount,
+        tradeType: TradeType.EXACT_INPUT,
+      });
+
+      return {
+        route,
+        trade,
+        pools,
+        quotedAmountOut,
+      };
+    },
+    [provider, readOnlyProvider, findPool]
   );
 
   const calculateTrade = useCallback(
     async (
-      token: Token,
-      amount: string,
-      isBuying: boolean
+      inputToken: Token,
+      outputToken: Token,
+      amount: string
     ): Promise<V3TradeResult | null> => {
-      if (!provider || !amount || parseFloat(amount) <= 0) {
+      if (!(provider || readOnlyProvider) || !amount || parseFloat(amount) <= 0) {
         return null;
       }
 
       setTradeState(prev => ({ ...prev, isCalculating: true, error: null }));
 
       try {
-        const wethToken = new Token(CHAIN_ID, WETH_ADDRESS, 18, 'WETH', 'Wrapped Ether');
-        
-        // Check if selected token is WETH - cannot create WETH/WETH pool
-        if (token.address.toLowerCase() === WETH_ADDRESS.toLowerCase()) {
-          throw new Error('Cannot trade WETH with itself. Please select a different token.');
+        if (inputToken.address.toLowerCase() === outputToken.address.toLowerCase()) {
+          throw new Error('Input and output tokens must be different.');
         }
-        
-        // Check for invalid token addresses
-        if (token.address === 'ETH' || token.address.toLowerCase() === 'eth') {
-          throw new Error('ETH is not an ERC20 token. Please use WETH for trading.');
+
+        const bridges = getRouteBridgeTokens(inputToken, outputToken)
+          .filter(token => token.address.toLowerCase() !== WETH_ADDRESS.toLowerCase())
+          .slice(0, 7);
+        const tokenPaths: Token[][] = [
+          [inputToken, outputToken],
+          ...bridges.map(bridge => [inputToken, bridge, outputToken]),
+        ];
+
+        for (let i = 0; i < bridges.length; i++) {
+          for (let j = 0; j < bridges.length; j++) {
+            if (i === j) continue;
+            tokenPaths.push([inputToken, bridges[i], bridges[j], outputToken]);
+          }
         }
-        
-        const [inputToken, outputToken] = isBuying ? [wethToken, token] : [token, wethToken];
 
-        const poolInfo = await findBestPool(inputToken, outputToken);
+        const uniquePaths = tokenPaths.filter((path, index, paths) => {
+          const key = path.map(token => token.address.toLowerCase()).join('>');
+          return paths.findIndex(candidate =>
+            candidate.map(token => token.address.toLowerCase()).join('>') === key
+          ) === index;
+        });
 
-        if (!poolInfo) {
+        const candidates = (await Promise.all(uniquePaths.map(path => buildRouteCandidate(path, amount))))
+          .filter((candidate): candidate is V3RouteCandidate => candidate !== null);
+
+        if (candidates.length === 0) {
           throw new Error('No V3 liquidity pool found for this token pair');
         }
 
-        const route = new Route([poolInfo.pool], inputToken, outputToken);
-        const amountIn = CurrencyAmount.fromRawAmount(
-          inputToken,
-          ethers.utils.parseUnits(amount, inputToken.decimals).toString()
-        );
+        candidates.sort((a, b) => {
+          if (!a.quotedAmountOut.eq(b.quotedAmountOut)) {
+            return a.quotedAmountOut.gt(b.quotedAmountOut) ? -1 : 1;
+          }
 
-        // Use V3 Quoter contract to get output amount (doesn't require tick data)
-        const quoter = new ethers.Contract(
-          V3_QUOTER_ADDRESS,
-          ['function quoteExactInputSingle(address tokenIn, address tokenOut, uint24 fee, uint256 amountIn, uint160 sqrtPriceLimitX96) external returns (uint256 amountOut)'],
-          provider
-        );
-        
-        const amountOutRaw = await quoter.callStatic.quoteExactInputSingle(
-          inputToken.address,
-          outputToken.address,
-          poolInfo.fee,
-          amountIn.quotient.toString(),
-          0 // No price limit
-        );
-        
-        const outputAmount = CurrencyAmount.fromRawAmount(
-          outputToken,
-          amountOutRaw.toString()
-        );
+          if (a.pools.length !== b.pools.length) {
+            return a.pools.length - b.pools.length;
+          }
 
-        const trade = Trade.createUncheckedTrade({
-          route,
-          inputAmount: amountIn,
-          outputAmount,
-          tradeType: TradeType.EXACT_INPUT
+          const aLiquidity = a.pools.reduce((sum, pool) => sum + BigInt(pool.liquidity), 0n);
+          const bLiquidity = b.pools.reduce((sum, pool) => sum + BigInt(pool.liquidity), 0n);
+          if (aLiquidity === bLiquidity) return 0;
+          return aLiquidity > bLiquidity ? -1 : 1;
         });
+
+        const bestCandidate = candidates[0];
+        const trade = bestCandidate.trade;
+        const route = bestCandidate.route;
+        const poolInfo = bestCandidate.pools[0];
 
         const slippageTolerance = new Percent(DEFAULT_SLIPPAGE, 10000);
         const minimumAmountOut = trade.minimumAmountOut(slippageTolerance);
 
-        const feeTier = poolInfo.fee === FeeAmount.LOWEST ? '0.01%' :
-                         poolInfo.fee === FeeAmount.LOW ? '0.05%' :
-                         poolInfo.fee === FeeAmount.MEDIUM ? '0.3%' : '1%';
+        const feeTier = bestCandidate.pools
+          .map(pool => pool.fee === FeeAmount.LOWEST ? '0.01%' :
+            pool.fee === FeeAmount.LOW ? '0.05%' :
+            pool.fee === FeeAmount.MEDIUM ? '0.3%' : '1%')
+          .join(' -> ');
 
         const tradeRoute: TradeRoute = {
           version: 'V3',
           inputAmount: trade.inputAmount.toSignificant(6),
           outputAmount: trade.outputAmount.toSignificant(6),
+          inputAddress: inputToken.address,
+          outputAddress: outputToken.address,
+          inputSymbol: inputToken.symbol || 'TOKEN',
+          outputSymbol: outputToken.symbol || 'TOKEN',
           executionPrice: trade.executionPrice.toSignificant(6),
           priceImpact: trade.priceImpact.toSignificant(2),
           minimumReceived: minimumAmountOut.toSignificant(6),
-          fee: poolInfo.fee,
+          fee: bestCandidate.pools.reduce((total, pool) => total + pool.fee, 0),
           feeTier,
-          path: [inputToken.address, outputToken.address],
+          path: route.tokenPath.map(token => token.address),
+          pathSymbols: route.tokenPath.map(token => token.symbol || 'TOKEN'),
+          isMultiHop: bestCandidate.pools.length > 1,
         };
 
         setTradeState({
@@ -207,22 +280,22 @@ export const useV3Trade = (
         return null;
       }
     },
-    [provider, findBestPool]
+    [provider, readOnlyProvider, buildRouteCandidate]
   );
 
   const executeTrade = useCallback(
     async (
       trade: Trade<Token, Token, TradeType>,
       account: string,
-      isBuying: boolean,
       slippage: number,
       deadline: number
     ): Promise<ethers.providers.TransactionReceipt> => {
       if (!signer || !trade) {
         throw new Error('Wallet not connected or trade not calculated');
       }
+      const isNativeInput = trade.inputAmount.currency.symbol === 'ETH';
       // Check wallet balance for ETH buys
-      if (isBuying) {
+      if (isNativeInput) {
         try {
           const balance = await signer.provider!.getBalance(account);
           const value = ethers.utils.parseUnits(trade.inputAmount.toExact(), 18);
@@ -247,7 +320,7 @@ export const useV3Trade = (
       }
 
       // Check token balance for sells
-      if (!isBuying) {
+      if (!isNativeInput) {
         try {
           const tokenContract = new ethers.Contract(
             trade.inputAmount.currency.address,
@@ -287,7 +360,7 @@ export const useV3Trade = (
 
       // SwapRouter returns calldata that should be sent directly to the router
       // The calldata already includes the function selector and encoded parameters
-      if (isBuying) {
+      if (isNativeInput) {
         const value = ethers.BigNumber.from(trade.inputAmount.quotient.toString());
         
         try {
@@ -394,6 +467,6 @@ export const useV3Trade = (
     calculateTrade,
     executeTrade,
     clearTrade,
-    findBestPool,
+    findBestPool: findPool,
   };
 };

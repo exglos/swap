@@ -28,12 +28,20 @@ interface PoolKey {
 interface V4SwapParams {
   tokenIn: Token;
   tokenOut: Token;
+  pathTokens?: Token[];
   amountIn: string;
   amountOut: string;
   minAmountOut?: string;
   fee: number;
   poolId: string;
-  isBuying: boolean;
+  poolPath?: Array<{
+    fee: number;
+    tickSpacing: number;
+    hooks: string;
+  }>;
+  tickSpacing?: number;
+  hooks?: string;
+  useNativeInput?: boolean;
   deadline?: number;
 }
 
@@ -55,7 +63,9 @@ export async function executeV4Swap(
     tokenOut,
     amountIn,
     fee,
-    isBuying,
+    useNativeInput,
+    pathTokens,
+    poolPath,
   } = params;
 
   // Calculate deadline (20 minutes from now)
@@ -69,44 +79,53 @@ export async function executeV4Swap(
     ? BigInt(params.minAmountOut)
     : BigInt(0); // Will be calculated from route if not provided
 
-  const poolKey: PoolKey = {
-    currency0: tokenIn.address < tokenOut.address ? tokenIn.address : tokenOut.address,
-    currency1: tokenIn.address < tokenOut.address ? tokenOut.address : tokenIn.address,
-    fee,
-    tickSpacing: 60, // Standard tick spacing for most pools
-    hooks: ethers.constants.AddressZero, // No hooks for basic swap
-  };
-
-  // Determine swap direction (zeroForOne)
-  const zeroForOne = tokenIn.address < tokenOut.address;
-
   // Use official V4Planner from @uniswap/v4-sdk
   const v4Planner = new V4Planner();
   const routePlanner = new RoutePlanner();
 
-  // Add V4 actions in correct order per documentation
-  v4Planner.addAction(Actions.SWAP_EXACT_IN_SINGLE, [
-    {
-      poolKey,
-      zeroForOne,
-      amountIn: amountInWei.toString(),
-      amountOutMinimum: (minAmountOut || BigInt(0)).toString(),
-      hookData: '0x'
-    }
-  ]);
-  
-  // SETTLE_ALL: Pay the input currency
-  // TAKE_ALL: Receive the output currency
-  // These depend on swap direction (zeroForOne)
-  const inputCurrency = zeroForOne ? poolKey.currency0 : poolKey.currency1;
-  const outputCurrency = zeroForOne ? poolKey.currency1 : poolKey.currency0;
+  const routeTokens = pathTokens && pathTokens.length > 1 ? pathTokens : [tokenIn, tokenOut];
+  const routePools = poolPath && poolPath.length > 0
+    ? poolPath
+    : [{
+        fee,
+        tickSpacing: params.tickSpacing ?? 60,
+        hooks: params.hooks ?? ethers.constants.AddressZero,
+      }];
+
+  if (routeTokens.length !== routePools.length + 1) {
+    throw new Error('Invalid V4 route: tokens and pool path length mismatch.');
+  }
+
+  for (let i = 0; i < routePools.length; i++) {
+    const currentTokenIn = routeTokens[i];
+    const currentTokenOut = routeTokens[i + 1];
+    const currentPool = routePools[i];
+    const poolKey: PoolKey = {
+      currency0: currentTokenIn.address < currentTokenOut.address ? currentTokenIn.address : currentTokenOut.address,
+      currency1: currentTokenIn.address < currentTokenOut.address ? currentTokenOut.address : currentTokenIn.address,
+      fee: currentPool.fee,
+      tickSpacing: currentPool.tickSpacing,
+      hooks: currentPool.hooks,
+    };
+    const zeroForOne = currentTokenIn.address < currentTokenOut.address;
+
+    v4Planner.addAction(Actions.SWAP_EXACT_IN_SINGLE, [
+      {
+        poolKey,
+        zeroForOne,
+        amountIn: i === 0 ? amountInWei.toString() : '0',
+        amountOutMinimum: i === routePools.length - 1 ? (minAmountOut || BigInt(0)).toString() : '0',
+        hookData: '0x'
+      }
+    ]);
+  }
   
   v4Planner.addAction(Actions.SETTLE_ALL, [
-    inputCurrency,
+    routeTokens[0].address,
     amountInWei.toString(),
   ]);
   v4Planner.addAction(Actions.TAKE_ALL, [
-    outputCurrency,
+    routeTokens[routeTokens.length - 1].address,
     minAmountOut?.toString() || '0',
   ]);
 
@@ -124,7 +143,7 @@ export async function executeV4Swap(
   );
 
   // Handle token approval for non-ETH swaps using Permit2
-  if (!isBuying) {
+  if (!useNativeInput) {
     try {
       const tokenContract = new ethers.Contract(
         tokenIn.address,
@@ -197,7 +216,7 @@ export async function executeV4Swap(
   }
 
   // Execute swap through Universal Router using official SDK
-  const txOptions: any = isBuying ? { value: amountInWei.toString() } : {};
+  const txOptions: any = useNativeInput ? { value: amountInWei.toString() } : {};
 
   try {
     const tx = await universalRouter.execute(

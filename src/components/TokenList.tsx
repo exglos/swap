@@ -5,6 +5,7 @@ interface Token {
   symbol: string;
   name: string;
   address: string;
+  logoURI?: string;
   decimals?: number;
 }
 
@@ -12,7 +13,7 @@ interface TokenListProps {
   tokens: Token[];
   onSelectToken: (address: string) => void;
   currentToken?: string;
-  getTokenLogo: (symbol: string) => React.ReactElement;
+  getTokenLogo: (token: Token) => React.ReactElement;
 }
 
 export const TokenList = ({ tokens, onSelectToken, currentToken, getTokenLogo }: TokenListProps) => {
@@ -36,7 +37,7 @@ export const TokenList = ({ tokens, onSelectToken, currentToken, getTokenLogo }:
             currentToken === token.address ? 'bg-accent/20 border border-accent/40' : ''
           }`}
         >
-          {getTokenLogo(token.symbol)}
+          {getTokenLogo(token)}
           <div className="flex-1 text-left">
             <p className="text-sm font-medium text-foreground">{token.name}</p>
             <p className="text-xs text-muted-foreground">

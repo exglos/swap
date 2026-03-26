@@ -135,3 +135,34 @@
     @apply bg-background text-foreground antialiased;
   }
 }
+
+@keyframes quote-shimmer {
+  0% {
+    transform: translateX(-140%);
+  }
+  100% {
+    transform: translateX(140%);
+  }
+}
+
+@layer components {
+  .quote-stale {
+    position: relative;
+    overflow: hidden;
+  }
+
+  .quote-stale::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(
+      110deg,
+      transparent 20%,
+      color-mix(in oklab, var(--color-uni-text3) 18%, transparent) 48%,
+      transparent 76%
+    );
+    transform: translateX(-140%);
+    animation: quote-shimmer 1.25s linear infinite;
+    pointer-events: none;
+  }
+}

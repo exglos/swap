@@ -25,6 +25,6 @@ export default defineConfig({
   },
   // 3. Force Vite to pre-bundle these problematic dependencies
   optimizeDeps: {
-    include: ["sonner", "ethers", "buffer"],
+    include: ["sonner", "ethers", "buffer", "lucide-react"],
   },
 });

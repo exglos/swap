@@ -28,32 +28,26 @@ interface TokenSelectorModalProps {
 const POPULAR_TOKENS: Token[] = [
   // Top 20 tokens from Uniswap Default Token List (v18.6.0)
   // Core Assets
-  { symbol: 'ETH', name: 'Native Ethereum', address: '0x0000000000000000000000000000000000000000', decimals: 18 }, // V4 Native ETH
-  { symbol: 'USDC', name: 'USD Coin', address: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', decimals: 6 },
-  { symbol: 'USDT', name: 'Tether', address: '0xdAC17F958D2ee523a2206206994597C13D831ec7', decimals: 6 },
-  { symbol: 'WBTC', name: 'Wrapped Bitcoin', address: '0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599', decimals: 8 },
-  { symbol: 'WETH', name: 'Wrapped Ether', address: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2', decimals: 18 }, // Keep for V3/legacy
-  { symbol: 'DAI', name: 'Dai Stablecoin', address: '0x6B175474E89094C44Da98b954EedeAC495271d0F', decimals: 18 },
+  { symbol: 'ETH', name: 'Native Ethereum', address: '0x0000000000000000000000000000000000000000', decimals: 18, logoURI: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/info/logo.png' }, // V4 Native ETH
+  { symbol: 'USDC', name: 'USD Coin', address: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', decimals: 6, logoURI: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48/logo.png' },
+  { symbol: 'USDT', name: 'Tether', address: '0xdAC17F958D2ee523a2206206994597C13D831ec7', decimals: 6, logoURI: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/0xdAC17F958D2ee523a2206206994597C13D831ec7/logo.png' },
+  { symbol: 'WBTC', name: 'Wrapped Bitcoin', address: '0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599', decimals: 8, logoURI: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599/logo.png' },
+  { symbol: 'WETH', name: 'Wrapped Ether', address: '0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2', decimals: 18, logoURI: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2/logo.png' }, // Keep for V3/legacy
+  { symbol: 'DAI', name: 'Dai Stablecoin', address: '0x6B175474E89094C44Da98b954EedeAC495271d0F', decimals: 18, logoURI: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/0x6B175474E89094C44Da98b954EedeAC495271d0F/logo.png' },
   
   // Major DeFi Tokens
-  { symbol: 'UNI', name: 'Uniswap', address: '0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984', decimals: 18 },
-  { symbol: 'LINK', name: 'ChainLink Token', address: '0x514910771AF9Ca656af840dff83E8264EcF986CA', decimals: 18 },
-  { symbol: 'AAVE', name: 'Aave', address: '0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9', decimals: 18 },
-  { symbol: 'COMP', name: 'Compound', address: '0xc00e94Cb662C3520282E6F5717214004A7f26884', decimals: 18 },
-  { symbol: 'MKR', name: 'Maker', address: '0x9f8F72aA9304c8B593d555F12eF511b4C9d8Acd', decimals: 18 },
-  { symbol: 'SUSHI', name: 'SushiToken', address: '0x6B3595068778DD592e39A122f4f5a5cF68C4C9E6', decimals: 18 },
-  { symbol: '1INCH', name: '1inch', address: '0x111111111117dC0aa78b770fA6A738034120C302', decimals: 18 },
+  { symbol: 'UNI', name: 'Uniswap', address: '0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984', decimals: 18, logoURI: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984/logo.png' },
+  { symbol: 'LINK', name: 'ChainLink Token', address: '0x514910771AF9Ca656af840dff83E8264EcF986CA', decimals: 18, logoURI: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/0x514910771AF9Ca656af840dff83E8264EcF986CA/logo.png' },
+  { symbol: 'AAVE', name: 'Aave', address: '0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9', decimals: 18, logoURI: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9/logo.png' },
+  { symbol: '1INCH', name: '1inch', address: '0x111111111117dC0aa78b770fA6A738034120C302', decimals: 18, logoURI: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/0x111111111117dC0aa78b770fA6A738034120C302/logo.png' },
   
   // Liquid Staking
-  { symbol: 'RETH', name: 'Rocket Pool ETH', address: '0xae78ae78ae78ae78ae78ae78ae78ae78ae786393', decimals: 18 },
-  { symbol: 'stETH', name: 'Lido Staked Ether', address: '0xae7ab96520DEB3fB1962E36f1979c5B3d220C649', decimals: 18 },
   { symbol: 'cbETH', name: 'Coinbase Wrapped Staked ETH', address: '0xBe9895146f7AF43049ca1c1AE358B0541Ea49704', decimals: 18 },
   
   // Popular Altcoins
-  { symbol: 'SHIB', name: 'Shiba Inu', address: '0x95aD61b0a150d79219dCF64E1E6Cc01f0B64C4cE', decimals: 18 },
-  { symbol: 'MATIC', name: 'Polygon', address: '0x7D1AfA7B718fb893dB30A3aBc0Cfc608AaCfeBB0', decimals: 18 },
-  { symbol: 'ENJ', name: 'Enjin Coin', address: '0xF629cDdD2e023a69104b8d4708C0E4F0807C4AEC', decimals: 18 },
-  { symbol: 'MANA', name: 'Decentraland', address: '0x0F5D2fB29fb7d3CFeE444a200298f468908cC942', decimals: 18 },
+  { symbol: 'SHIB', name: 'Shiba Inu', address: '0x95aD61b0a150d79219dCF64E1E6Cc01f0B64C4cE', decimals: 18, logoURI: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/0x95aD61b0a150d79219dCF64E1E6Cc01f0B64C4cE/logo.png' },
+  { symbol: 'MATIC', name: 'Polygon', address: '0x7D1AfA7B718fb893dB30A3aBc0Cfc608AaCfeBB0', decimals: 18, logoURI: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/0x7D1AfA7B718fb893dB30A3aBc0Cfc608AaCfeBB0/logo.png' },
+  { symbol: 'MANA', name: 'Decentraland', address: '0x0F5D2fB29fb7d3CFeE444a200298f468908cC942', decimals: 18, logoURI: 'https://raw.githubusercontent.com/trustwallet/assets/master/blockchains/ethereum/assets/0x0F5D2fB29fb7d3CFeE444a200298f468908cC942/logo.png' },
 ];
 
 export const TokenSelectorModal = ({ isOpen, onClose, onSelectToken, currentToken }: TokenSelectorModalProps) => {
@@ -73,7 +67,7 @@ export const TokenSelectorModal = ({ isOpen, onClose, onSelectToken, currentToke
     setSearchQuery('');
   };
 
-  const getTokenLogo = (symbol: string) => {
+  const getTokenLogo = (token: Token) => {
     const colors: Record<string, string> = {
       'ETH': '#627EEA',
       'USDC': '#2775CA',
@@ -96,13 +90,40 @@ export const TokenSelectorModal = ({ isOpen, onClose, onSelectToken, currentToke
       'ADO': '#7B3FE4',
       'SKY': '#1AAB9B',
     };
-    
-    return (
+
+    const fallback = (
       <div 
         className="flex h-9 w-9 items-center justify-center rounded-full text-white font-bold text-sm shrink-0"
-        style={{ backgroundColor: colors[symbol] || '#6B7280' }}
+        style={{ backgroundColor: colors[token.symbol] || '#6B7280' }}
       >
-        {symbol.slice(0, 2)}
+        {token.symbol.slice(0, 2)}
+      </div>
+    );
+
+    if (!token.logoURI) {
+      return fallback;
+    }
+
+    return (
+      <div className="relative h-9 w-9 shrink-0">
+        <img
+          key={`${token.address.toLowerCase()}-${token.logoURI}`}
+          src={token.logoURI}
+          alt={`${token.symbol} logo`}
+          className="h-9 w-9 rounded-full bg-muted object-cover"
+          onError={(event) => {
+            const image = event.currentTarget;
+            image.onerror = null;
+            image.style.display = 'none';
+            const fallbackElement = image.nextElementSibling as HTMLElement | null;
+            if (fallbackElement) {
+              fallbackElement.style.display = 'flex';
+            }
+          }}
+        />
+        <div className="absolute inset-0 hidden">
+          {fallback}
+        </div>
       </div>
     );
   };

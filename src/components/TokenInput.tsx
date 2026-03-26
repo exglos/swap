@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useCallback } from 'react';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Loader2, Search, AlertCircle } from 'lucide-react';
@@ -31,20 +31,20 @@ export const TokenInput = ({ value, onChange, tokenInfo, onSelectToken }: TokenI
   // Check if current address is a common token
   const isCurrentCommonToken = value && isCommonToken(value);
 
-  const handleInputChange = (newValue: string) => {
+  const handleInputChange = useCallback((newValue: string) => {
     onChange(newValue);
     setSearchQuery(newValue);
     setShowSuggestions(newValue.length > 0);
-  };
+  }, [onChange]);
 
-  const selectToken = (token: any) => {
+  const selectToken = useCallback((token: { address: string; symbol?: string; name?: string }) => {
     onChange(token.address);
     setSearchQuery('');
     setShowSuggestions(false);
     if (onSelectToken) {
       onSelectToken(token);
     }
-  };
+  }, [onChange, onSelectToken]);
 
   return (
     <div className="space-y-3">

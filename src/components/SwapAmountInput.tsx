@@ -11,6 +11,7 @@ interface SwapAmountInputProps {
   onTokenClick?: () => void;
   showChevron?: boolean;
   priceInfo?: string;
+  isStale?: boolean;
 }
 
 export const SwapAmountInput = ({
@@ -22,6 +23,7 @@ export const SwapAmountInput = ({
   onTokenClick,
   showChevron = false,
   priceInfo,
+  isStale = false,
 }: SwapAmountInputProps) => {
   const handleInputChange = (val: string) => {
     if (onChange && (val === '' || /^\d*\.?\d*$/.test(val))) {
@@ -49,7 +51,7 @@ export const SwapAmountInput = ({
   const amountWarning = getAmountWarning();
 
   return (
-    <div className="rounded-2xl bg-uni-surface2 p-4">
+    <div className={`rounded-2xl bg-uni-surface2 p-4 transition-opacity ${isStale ? 'quote-stale' : ''}`}>
       <Label className="text-sm text-uni-text2 mb-1 block">{label}</Label>
       <div className="flex items-center justify-between">
         <Input
@@ -62,7 +64,7 @@ export const SwapAmountInput = ({
           readOnly={readOnly}
           className={`w-full bg-transparent text-4xl font-light text-uni-text1 outline-none placeholder:text-uni-text3 ${
             readOnly ? 'cursor-default' : ''
-          }`}
+          } ${isStale ? 'opacity-80' : ''}`}
         />
         <button
           onClick={onTokenClick}

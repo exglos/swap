@@ -1,4 +1,4 @@
-import { useState, useMemo } from 'react';
+import { useState, useMemo, useEffect } from 'react';
 import { StatusMessage } from './StatusMessage';
 import { TokenSelectorModal } from './TokenSelectorModal';
 import { TokenAddressInput } from './TokenAddressInput';
@@ -13,14 +13,14 @@ import { useWalletBalances } from '@/hooks/useWalletBalances';
 import { useWETH } from '@/hooks/useWETH';
 import { WrapModal } from './WrapModal';
 import { TradeSettings } from './TradeSettings';
-import { ArrowDown, Settings } from 'lucide-react';
+import { ArrowDown } from 'lucide-react';
 import { ethers } from 'ethers';
 import { Button } from './ui/button';
 import { showTransactionToast, showWrapToast } from '@/utils/notifications';
 
 // Import the popular tokens list for fallback
 const POPULAR_TOKENS = [
-  { symbol: 'ETH', name: 'Ethereum', address: 'ETH', decimals: 18 },
+  { symbol: 'ETH', name: 'Ethereum', address: ethers.constants.AddressZero, decimals: 18 },
   { symbol: 'USDC', name: 'USD Coin', address: '0xA0b86991c6218b36c1d19D4a2e9Eb0cE3606eB48', decimals: 6 },
   { symbol: 'USDT', name: 'Tether', address: '0xdAC17F958D2ee523a2206206994597C13D831ec7', decimals: 6 },
   { symbol: 'WBTC', name: 'Wrapped Bitcoin', address: '0x2260FAC5E5542a773Aa44fBCfeDf7C193bc2C599', decimals: 8 },
@@ -29,16 +29,10 @@ const POPULAR_TOKENS = [
   { symbol: 'UNI', name: 'Uniswap', address: '0x1f9840a85d5aF5bf1D1762F925BDADdC4201F984', decimals: 18 },
   { symbol: 'LINK', name: 'ChainLink Token', address: '0x514910771AF9Ca656af840dff83E8264EcF986CA', decimals: 18 },
   { symbol: 'AAVE', name: 'Aave', address: '0x7Fc66500c84A76Ad7e9c93437bFc5Ac33E2DDaE9', decimals: 18 },
-  { symbol: 'COMP', name: 'Compound', address: '0xc00e94Cb662C3520282E6F5717214004A7f26884', decimals: 18 },
-  { symbol: 'MKR', name: 'Maker', address: '0x9f8F72aA9304c8B593d555F12eF511b4C9d8Acd', decimals: 18 },
-  { symbol: 'SUSHI', name: 'SushiToken', address: '0x6B3595068778DD592e39A122f4f5a5cF68C4C9E6', decimals: 18 },
   { symbol: '1INCH', name: '1inch', address: '0x111111111117dC0aa78b770fA6A738034120C302', decimals: 18 },
-  { symbol: 'RETH', name: 'Rocket Pool ETH', address: '0xae78ae78ae78ae78ae78ae78ae78ae78ae786393', decimals: 18 },
-  { symbol: 'stETH', name: 'Lido Staked Ether', address: '0xae7ab96520DEB3fB1962E36f1979c5B3d220C649', decimals: 18 },
   { symbol: 'cbETH', name: 'Coinbase Wrapped Staked ETH', address: '0xBe9895146f7AF43049ca1c1AE358B0541Ea49704', decimals: 18 },
   { symbol: 'SHIB', name: 'Shiba Inu', address: '0x95aD61b0a150d79219dCF64E1E6Cc01f0B64C4cE', decimals: 18 },
   { symbol: 'MATIC', name: 'Polygon', address: '0x7D1AfA7B718fb893dB30A3aBc0Cfc608AaCfeBB0', decimals: 18 },
-  { symbol: 'ENJ', name: 'Enjin Coin', address: '0xF629cDdD2e023a69104b8d4708C0E4F0807C4AEC', decimals: 18 },
   { symbol: 'MANA', name: 'Decentraland', address: '0x0F5D2fB29fb7d3CFeE444a200298f468908cC942', decimals: 18 },
 ];
 
@@ -51,56 +45,69 @@ interface TradeInterfaceProps {
 }
 
 export const TradeInterface = ({ provider, signer, account, onConnectWallet,readonlyProvider }: TradeInterfaceProps) => {
-  const [tokenAddress, setTokenAddress] = useState('');
-  const [ethAmount, setEthAmount] = useState('');
-  const [tokenAmount, setTokenAmount] = useState('');
-  const [isBuying, setIsBuying] = useState(true);
-  const [isTokenSelectorOpen, setIsTokenSelectorOpen] = useState(false);
+  const [tokenAddressSelling, setTokenAddressSelling] = useState('');
+  const [tokenAddressBuying, setTokenAddressBuying] = useState('');
 
-  const tokenInfo = useToken(provider, readonlyProvider);
-  const tradeState = useTrade(provider, signer);
+  const [tokenAmountSelling, setTokenAmountSelling] = useState('');
+  const [tokenAmountBuying, setTokenAmountBuying] = useState('');
+  const [isTokenSelectorOpenSelling, setIsTokenSelectorOpenSelling] = useState(false);
+  const [isTokenSelectorBuyingOpen, setIsTokenSelectorBuyingOpen] = useState(false);
+
+  const tokenInfoBuying = useToken(provider, readonlyProvider);
+  const tokenInfoSelling = useToken(provider, readonlyProvider);
+  const tradeState = useTrade(provider, signer, readonlyProvider);
   const { txStatus } = useTradeExecution();
   const { eth, weth, loading: balanceLoading } = useWalletBalances(provider, account);
   const wethHook = useWETH(signer);
 
   const [isWrapModalOpen, setWrapModalOpen] = useState(false);
-  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [settings, setSettings] = useState({
-    slippage: 0.5, // percent
-    deadline: 20,   // minutes
+    slippage: 0.1, // percent
+    deadline: 10,   // minutes
   });
 
   // Fallback token info for when provider is not available
-  const fallbackTokenInfo = useMemo(() => {
-    if (!tokenAddress) return null;
+  const fallbackTokenInfoSelling = useMemo(() => {
+    if (!tokenAddressSelling) return null;
     
     const knownToken = POPULAR_TOKENS.find(token => 
-      token.address.toLowerCase() === tokenAddress.toLowerCase()
+      token.address.toLowerCase() === tokenAddressSelling.toLowerCase()
     );
     
     return knownToken || null;
-  }, [tokenAddress]);
+  }, [tokenAddressSelling]);
+
+  const fallbackTokenInfoBuying = useMemo(() => {
+    if (!tokenAddressBuying) return null;
+
+    const knownToken = POPULAR_TOKENS.find(token =>
+      token.address.toLowerCase() === tokenAddressBuying.toLowerCase()
+    );
+
+    return knownToken || null;
+  }, [tokenAddressBuying]);
 
   // Use fallback token info when provider is not available or token info is not loaded
-  const displayTokenInfo = useMemo(() => {
+  const displayTokenInfoSelling = useMemo(() => {
+
     // If we have token info from the hook, use it
-    if (tokenInfo.name || tokenInfo.symbol) {
+    if (tokenInfoSelling.name || tokenInfoSelling.symbol) {
       return {
-        name: tokenInfo.name,
-        symbol: tokenInfo.symbol,
-        decimals: tokenInfo.decimals,
-        hasLiquidity: tokenInfo.hasLiquidity,
-        isLoading: tokenInfo.isLoading,
-        error: tokenInfo.error
+        name: tokenInfoSelling.name,
+        symbol: tokenInfoSelling.symbol,
+        decimals: tokenInfoSelling.decimals,
+        hasLiquidity: tokenInfoSelling.hasLiquidity,
+        isLoading: tokenInfoSelling.isLoading,
+        error: tokenInfoSelling.error
       };
     }
     
     // If no provider but we have fallback info, use it
-    if (!provider && fallbackTokenInfo) {
+    if (!provider && fallbackTokenInfoSelling) {
       return {
-        name: fallbackTokenInfo.name,
-        symbol: fallbackTokenInfo.symbol,
-        decimals: fallbackTokenInfo.decimals,
+        name: fallbackTokenInfoSelling.name,
+        symbol: fallbackTokenInfoSelling.symbol,
+        decimals: fallbackTokenInfoSelling.decimals,
         hasLiquidity: true, // Assume popular tokens have liquidity
         isLoading: false,
         error: null
@@ -109,33 +116,146 @@ export const TradeInterface = ({ provider, signer, account, onConnectWallet,read
     
     // Otherwise, return the original token info (might be empty)
     return {
-      name: tokenInfo.name,
-      symbol: tokenInfo.symbol,
-      decimals: tokenInfo.decimals,
-      hasLiquidity: tokenInfo.hasLiquidity,
-      isLoading: tokenInfo.isLoading,
-      error: tokenInfo.error
+      name: tokenInfoSelling.name,
+      symbol: tokenInfoSelling.symbol,
+      decimals: tokenInfoSelling.decimals,
+      hasLiquidity: tokenInfoSelling.hasLiquidity,
+      isLoading: tokenInfoSelling.isLoading,
+      error: tokenInfoSelling.error
     };
-  }, [tokenInfo, fallbackTokenInfo, provider]);
+  }, [tokenInfoSelling, fallbackTokenInfoSelling, provider]);
+
+  const displayTokenInfoBuying = useMemo(() => {
+
+    // If we have token info from the hook, use it
+    if (tokenInfoBuying.name || tokenInfoBuying.symbol) {
+      return {
+        name: tokenInfoBuying.name,
+        symbol: tokenInfoBuying.symbol,
+        decimals: tokenInfoBuying.decimals,
+        hasLiquidity: tokenInfoBuying.hasLiquidity,
+        isLoading: tokenInfoBuying.isLoading,
+        error: tokenInfoBuying.error
+      };
+    }
+
+    // If no provider but we have fallback info, use it
+    if (!provider && fallbackTokenInfoBuying) {
+      return {
+        name: fallbackTokenInfoBuying.name,
+        symbol: fallbackTokenInfoBuying.symbol,
+        decimals: fallbackTokenInfoBuying.decimals,
+        hasLiquidity: true, // Assume popular tokens have liquidity
+        isLoading: false,
+        error: null
+      };
+    }
+
+    // Otherwise, return the original token info (might be empty)
+    return {
+      name: tokenInfoBuying.name,
+      symbol: tokenInfoBuying.symbol,
+      decimals: tokenInfoBuying.decimals,
+      hasLiquidity: tokenInfoBuying.hasLiquidity,
+      isLoading: tokenInfoBuying.isLoading,
+      error: tokenInfoBuying.error
+    };
+  }, [tokenInfoBuying, fallbackTokenInfoBuying, provider]);
 
   // Memoize trade calculation props to prevent unnecessary re-renders
   const tradeCalculationProps = useMemo(() => ({
-    tokenAddress,
-    ethAmount,
-    tokenAmount,
-    isBuying,
-    tokenInfo,
+    inputTokenAddress: tokenAddressSelling,
+    outputTokenAddress: tokenAddressBuying,
+    inputAmount: tokenAmountSelling,
+    tokenInfo: tokenInfoBuying,
     tradeState,
-    setTokenAmount,
-    setEthAmount,
-  }), [tokenAddress, ethAmount, tokenAmount, isBuying, tokenInfo, tradeState, setTokenAmount, setEthAmount]);
+    setOutputAmount: setTokenAmountBuying,
+  }), [tokenAddressSelling, tokenAddressBuying, tokenAmountSelling, tokenInfoBuying, tradeState, setTokenAmountBuying]);
 
   useTradeCalculation(tradeCalculationProps);
 
+  useEffect(() => {
+    const syncSellTokenFromQuery = () => {
+      const params = new URLSearchParams(window.location.search);
+      const requestedToken = params.get('token')?.trim();
+
+      if (!requestedToken || !ethers.utils.isAddress(requestedToken)) {
+        return;
+      }
+
+      setTokenAddressSelling(currentAddress =>
+        currentAddress.toLowerCase() === requestedToken.toLowerCase() ? currentAddress : requestedToken
+      );
+    };
+
+    syncSellTokenFromQuery();
+    window.addEventListener('popstate', syncSellTokenFromQuery);
+
+    return () => {
+      window.removeEventListener('popstate', syncSellTokenFromQuery);
+    };
+  }, []);
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const currentQueryToken = params.get('token');
+
+    if (tokenAddressSelling && ethers.utils.isAddress(tokenAddressSelling)) {
+      if (currentQueryToken?.toLowerCase() === tokenAddressSelling.toLowerCase()) {
+        return;
+      }
+
+      params.set('token', tokenAddressSelling);
+    } else {
+      if (!currentQueryToken) {
+        return;
+      }
+
+      params.delete('token');
+    }
+
+    const nextQuery = params.toString();
+    const nextUrl = `${window.location.pathname}${nextQuery ? `?${nextQuery}` : ''}${window.location.hash}`;
+    window.history.replaceState(window.history.state, '', nextUrl);
+  }, [tokenAddressSelling]);
+
+  useEffect(() => {
+    const timeoutId = setTimeout(() => {
+      if (tokenAddressSelling && ethers.utils.isAddress(tokenAddressSelling)) {
+        tokenInfoSelling.fetchTokenInfo(tokenAddressSelling);
+      } else {
+        tokenInfoSelling.clearTokenInfo();
+      }
+    }, 500);
+
+    return () => clearTimeout(timeoutId);
+  }, [
+    tokenAddressSelling,
+    tokenInfoSelling.fetchTokenInfo,
+    tokenInfoSelling.clearTokenInfo,
+  ]);
+
+  useEffect(() => {
+    const timeoutId = setTimeout(() => {
+      if (tokenAddressBuying && ethers.utils.isAddress(tokenAddressBuying)) {
+        tokenInfoBuying.fetchTokenInfo(tokenAddressBuying);
+      } else {
+        tokenInfoBuying.clearTokenInfo();
+      }
+    }, 500);
+
+    return () => clearTimeout(timeoutId);
+  }, [
+    tokenAddressBuying,
+    tokenInfoBuying.fetchTokenInfo,
+    tokenInfoBuying.clearTokenInfo,
+  ]);
+
   const handleSwapMode = () => {
-    setIsBuying(!isBuying);
-    setEthAmount('');
-    setTokenAmount('');
+    setTokenAddressSelling(tokenAddressBuying);
+    setTokenAddressBuying(tokenAddressSelling);
+    setTokenAmountSelling(tokenAmountBuying);
+    setTokenAmountBuying(tokenAmountSelling);
     tradeState.clearTrade();
   };
 
@@ -143,38 +263,36 @@ export const TradeInterface = ({ provider, signer, account, onConnectWallet,read
     if (!account || !tradeState.route) return;
     
     // Create the execution promise using the multi-version trade executor
-    const tradePromise = tradeState.executeTrade(account, isBuying, settings.slippage, settings.deadline)
+    const tradePromise = tradeState.executeTrade(account, settings.slippage, settings.deadline)
       .then(tx => {
         // Clear form on success
-        setEthAmount('');
-        setTokenAmount('');
+        setTokenAmountSelling('');
+        setTokenAmountBuying('');
         tradeState.clearTrade();
         return tx;
       });
     
     // Show transaction toast (handles both success and error)
-    showTransactionToast(tradePromise, `${isBuying ? 'Buy' : 'Sell'} ${displayTokenInfo.symbol}`);
+    showTransactionToast(tradePromise, `Swap ${tradeState.route.inputSymbol} to ${tradeState.route.outputSymbol}`);
   };
 
   // Check if user has enough balance for the trade
   const hasEnoughBalance = () => {
-    if (!isBuying || !ethAmount) return true; // Selling doesn't need ETH balance check here
+    if (!tokenAmountSelling) return true;
+
+    const isNativeSell = tokenAddressSelling.toLowerCase() === ethers.constants.AddressZero.toLowerCase();
+    if (!isNativeSell) return true;
     
-    const amountNum = parseFloat(ethAmount);
+    const amountNum = parseFloat(tokenAmountSelling);
     if (isNaN(amountNum) || amountNum <= 0) return false;
     
     // Add gas buffer (0.005 ETH for safety)
     const gasBuffer = 0.005;
     const requiredAmount = amountNum + gasBuffer;
     
-    if (tradeState.version === 'V4') {
-      // V4 uses native ETH
-      return parseFloat(eth) >= requiredAmount;
-    } else {
-      // V3 can use WETH or wrap ETH
-      const totalAvailable = parseFloat(eth) + parseFloat(weth);
-      return totalAvailable >= requiredAmount;
-    }
+    return tradeState.version === 'V4'
+      ? parseFloat(eth) >= requiredAmount
+      : parseFloat(eth) + parseFloat(weth) >= requiredAmount;
   };
 
   const getBalanceMessage = () => {
@@ -182,30 +300,35 @@ export const TradeInterface = ({ provider, signer, account, onConnectWallet,read
     
     if (balanceLoading) return "Checking balances...";
     if (needsWrapping()) {
-      return `Wrap ${ethAmount} ETH to WETH for V3 trading`;
+      return `Wrap ${tokenAmountSelling} ETH to WETH for V3 trading`;
+    }
+    if (tokenAddressSelling.toLowerCase() !== ethers.constants.AddressZero.toLowerCase()) {
+      return null;
     }
     if (!hasEnoughBalance()) {
       if (tradeState.version === 'V4') {
-        return `Insufficient ETH. You have ${parseFloat(eth).toFixed(4)} ETH, need at least ${(parseFloat(ethAmount) + 0.005).toFixed(4)} ETH (including gas)`;
+        return `Insufficient ETH. You have ${parseFloat(eth).toFixed(4)} ETH, need at least ${(parseFloat(tokenAmountSelling) + 0.005).toFixed(4)} ETH (including gas)`;
       } else {
         const total = parseFloat(eth) + parseFloat(weth);
-        return `Insufficient funds. You have ${total.toFixed(4)} ETH total, need at least ${(parseFloat(ethAmount) + 0.005).toFixed(4)} ETH (including gas)`;
+        return `Insufficient funds. You have ${total.toFixed(4)} ETH total, need at least ${(parseFloat(tokenAmountSelling) + 0.005).toFixed(4)} ETH (including gas)`;
       }
     }
     return null;
   };
 
   const canTrade = !!(account && 
-    displayTokenInfo.hasLiquidity && 
+    tokenAddressSelling &&
+    tokenAddressBuying &&
     tradeState.route && 
-    ((isBuying && ethAmount) || (!isBuying && tokenAmount)) &&
+    tokenAmountSelling &&
     hasEnoughBalance());
 
   // Check if user needs to wrap ETH for V3
   const needsWrapping = () => {
-    if (!isBuying || !ethAmount || tradeState.version !== 'V3') return false;
+    if (!tokenAmountSelling || tradeState.version !== 'V3') return false;
+    if (tokenAddressSelling.toLowerCase() !== ethers.constants.AddressZero.toLowerCase()) return false;
     
-    const amountNum = parseFloat(ethAmount);
+    const amountNum = parseFloat(tokenAmountSelling);
     const wethBalance = parseFloat(weth);
     const ethBalance = parseFloat(eth);
     
@@ -239,26 +362,56 @@ export const TradeInterface = ({ provider, signer, account, onConnectWallet,read
     }
   };
 
+  const isDisplayedQuoteStale = useMemo(() => {
+    const activeRoute = tradeState.route;
+    const hasDisplayedQuote = Boolean(tokenAmountBuying || activeRoute?.outputAmount || tradeState.minimumReceived);
+
+    if (!hasDisplayedQuote) {
+      return false;
+    }
+
+    if (!activeRoute) {
+      return tradeState.isCalculating;
+    }
+
+    const currentInputAddress = tokenAddressSelling.toLowerCase();
+    const currentOutputAddress = tokenAddressBuying.toLowerCase();
+    const routeMatchesCurrentSelection =
+      activeRoute.inputAddress.toLowerCase() === currentInputAddress &&
+      activeRoute.outputAddress.toLowerCase() === currentOutputAddress &&
+      activeRoute.inputAmount === tokenAmountSelling;
+
+    return !routeMatchesCurrentSelection || tradeState.isCalculating;
+  }, [
+    tokenAmountBuying,
+    tokenAddressSelling,
+    tokenAddressBuying,
+    tokenAmountSelling,
+    tradeState.route,
+    tradeState.minimumReceived,
+    tradeState.isCalculating,
+  ]);
+
   return (
     <div className="w-full max-w-[480px]">
       <TokenAddressInput
-        value={tokenAddress}
-        onChange={setTokenAddress}
-        isLoading={displayTokenInfo.isLoading}
-        tokenName={displayTokenInfo.name}
-        tokenSymbol={displayTokenInfo.symbol}
-        decimals={displayTokenInfo.decimals}
-        hasLiquidity={displayTokenInfo.hasLiquidity}
-        error={displayTokenInfo.error}
+        value={tokenAddressSelling}
+        onChange={setTokenAddressSelling}
+        isLoading={displayTokenInfoSelling.isLoading}
+        tokenName={displayTokenInfoSelling.name}
+        tokenSymbol={displayTokenInfoSelling.symbol}
+        decimals={displayTokenInfoSelling.decimals}
+        hasLiquidity={displayTokenInfoSelling.hasLiquidity}
+        error={displayTokenInfoSelling.error}
       />
       
       <SwapAmountInput
         label="Sell"
-        value={isBuying ? ethAmount : tokenAmount}
-        onChange={isBuying ? setEthAmount : setTokenAmount}
-        tokenSymbol={isBuying ? 'ETH' : (displayTokenInfo.symbol || 'TOKEN')}
-        onTokenClick={!isBuying ? () => setIsTokenSelectorOpen(true) : undefined}
-        showChevron={!isBuying}
+        value={tokenAmountSelling}
+        onChange={setTokenAmountSelling}
+        tokenSymbol={(displayTokenInfoSelling.symbol || 'TOKEN')}
+        onTokenClick={() => setIsTokenSelectorOpenSelling(true)}
+        showChevron={true}
       />
 
       <div className="flex justify-center -my-3 relative z-10">
@@ -272,35 +425,80 @@ export const TradeInterface = ({ provider, signer, account, onConnectWallet,read
 
       <SwapAmountInput
         label="Buy"
-        value={isBuying ? tokenAmount : ethAmount}
-        tokenSymbol={isBuying ? (displayTokenInfo.symbol || 'TOKEN') : 'ETH'}
-        readOnly
-        onTokenClick={isBuying ? () => setIsTokenSelectorOpen(true) : undefined}
-        showChevron={isBuying}
-        priceInfo={tradeState.executionPrice ? `1 ETH ≈ ${tradeState.executionPrice} ${displayTokenInfo.symbol}` : undefined}
+        value={tokenAmountBuying}
+        readOnly={true}
+        tokenSymbol={(displayTokenInfoBuying.symbol || 'TOKEN')}
+        onTokenClick={ () => setIsTokenSelectorBuyingOpen(true)}
+        showChevron={true}
+        priceInfo={tradeState.executionPrice ? `1 ${tradeState.route?.inputSymbol || displayTokenInfoSelling.symbol || 'TOKEN'} ≈ ${tradeState.executionPrice} ${tradeState.route?.outputSymbol || displayTokenInfoBuying.symbol || 'TOKEN'}` : undefined}
+        isStale={isDisplayedQuoteStale}
       />
 
+      {tradeState.route && tradeState.version && (
+        <div className="mt-3 flex items-center justify-between rounded-2xl border border-uni-surface3 bg-uni-surface2 px-4 py-3">
+          <span className="text-xs uppercase tracking-wide text-uni-text3">Route Source</span>
+          <span className={`rounded-full px-3 py-1 text-xs font-semibold ${
+            tradeState.version === 'V4'
+              ? 'bg-uni-pink/20 text-uni-pink'
+              : 'bg-uni-text3/20 text-uni-text1'
+          }`}>
+            {tradeState.version === 'V4' ? 'Uniswap V4' : 'Uniswap V3 Fallback'}
+          </span>
+        </div>
+      )}
+
+      <div className="mt-3 rounded-2xl bg-uni-surface2 p-4 space-y-3">
+        <div>
+          <p className="text-xs uppercase tracking-wide text-uni-text3">Selling token</p>
+          <p className="mt-1 text-sm text-uni-text1">
+            {displayTokenInfoSelling.name || 'Not selected'}
+            {displayTokenInfoSelling.symbol ? ` (${displayTokenInfoSelling.symbol})` : ''}
+          </p>
+          <p className="text-xs text-uni-text2">
+            Decimals: {displayTokenInfoSelling.decimals}
+          </p>
+          <p className="text-xs font-mono text-uni-text3 break-all">
+            {tokenAddressSelling || 'No token address selected'}
+          </p>
+        </div>
+
+        <div className="border-t border-uni-surface3 pt-3">
+          <p className="text-xs uppercase tracking-wide text-uni-text3">Buying token</p>
+          <p className="mt-1 text-sm text-uni-text1">
+            {displayTokenInfoBuying.name || 'Not selected'}
+            {displayTokenInfoBuying.symbol ? ` (${displayTokenInfoBuying.symbol})` : ''}
+          </p>
+          <p className="text-xs text-uni-text2">
+            Decimals: {displayTokenInfoBuying.decimals}
+          </p>
+          <p className="text-xs font-mono text-uni-text3 break-all">
+            {tokenAddressBuying || 'No token address selected'}
+          </p>
+        </div>
+      </div>
+
       <TradeDetails
+        outputAmount={tradeState.route?.outputAmount || tokenAmountBuying}
         priceImpact={tradeState.priceImpact}
         minimumReceived={tradeState.minimumReceived}
-        tokenSymbol={displayTokenInfo.symbol}
-        isBuying={isBuying}
+        tokenSymbol={tradeState.route?.outputSymbol || displayTokenInfoBuying.symbol}
         version={tradeState.version}
-        feeTier={tradeState.route?.feeTier}
+        feeTier={tradeState.getRouteInfo()?.feeTier}
+        isFallback={tradeState.getRouteInfo()?.isFallback}
+        slippage={settings.slippage}
+        isStale={isDisplayedQuoteStale}
       />
 
       {/* Settings Section */}
-      <div className="flex items-center justify-between mt-3">
-        <div className="flex items-center gap-4 text-xs text-gray-400">
+      <div className="flex items-center justify-between text-xs text-gray-500 mt-3">
+        <div className="flex gap-4">
           <span>Slippage: {settings.slippage}%</span>
           <span>Deadline: {settings.deadline}m</span>
         </div>
-        <button
-          onClick={() => setIsSettingsOpen(true)}
-          className="p-2 rounded-lg hover:bg-gray-800 transition-colors text-gray-400 hover:text-white"
-        >
-          <Settings className="w-4 h-4" />
-        </button>
+        <TradeSettings
+          settings={settings}
+          setSettings={setSettings}
+        />
       </div>
 
       {getBalanceMessage() && (
@@ -315,13 +513,13 @@ export const TradeInterface = ({ provider, signer, account, onConnectWallet,read
         account={account}
         canTrade={canTrade}
         isCalculating={tradeState.isCalculating}
-        tokenAddress={tokenAddress}
-        isLoading={displayTokenInfo.isLoading}
-        hasLiquidity={!!displayTokenInfo.hasLiquidity}
-        isBuying={isBuying}
-        ethAmount={ethAmount}
-        tokenAmount={tokenAmount}
-        tokenSymbol={displayTokenInfo?.symbol}
+        tokenAddress={tokenAddressSelling}
+        outputTokenAddress={tokenAddressBuying}
+        isLoading={displayTokenInfoSelling.isLoading}
+        hasLiquidity={!!tradeState.route}
+        amount={tokenAmountSelling}
+        tokenSymbol={tradeState.route?.outputSymbol || displayTokenInfoBuying?.symbol}
+        error={tradeState.error}
         onClick={handleButtonClick}
       />
 
@@ -336,31 +534,57 @@ export const TradeInterface = ({ provider, signer, account, onConnectWallet,read
         </div>
       ) : null}
 
+      {tradeState.debugSteps && tradeState.debugSteps.length > 0 ? (
+        <div className="mt-3 rounded-2xl bg-uni-surface2 p-4 space-y-2">
+          <p className="text-xs uppercase tracking-wide text-uni-text3">ROUTE INFO</p>
+          {tradeState.debugSteps.map((step, index) => (
+            <div key={`${step.label}-${index}`} className="rounded-xl border border-uni-surface3 px-3 py-2">
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-sm text-uni-text1">{step.label}</span>
+                <span className={`rounded-full px-2 py-0.5 text-[10px] font-semibold ${
+                  step.status === 'success'
+                    ? 'bg-green-500/15 text-green-400'
+                    : step.status === 'error'
+                    ? 'bg-red-500/15 text-red-400'
+                    : 'bg-uni-text3/20 text-uni-text2'
+                }`}>
+                  {step.status}
+                </span>
+              </div>
+              <p className="mt-1 break-all text-xs text-uni-text2">{step.details}</p>
+            </div>
+          ))}
+        </div>
+      ) : null}
+
       <TokenSelectorModal
-        isOpen={isTokenSelectorOpen}
-        onClose={() => setIsTokenSelectorOpen(false)}
+        isOpen={isTokenSelectorOpenSelling}
+        onClose={() => setIsTokenSelectorOpenSelling(false)}
         onSelectToken={(address) => {
-          setTokenAddress(address);
-          setIsTokenSelectorOpen(false);
+          setTokenAddressSelling(address);
+          setIsTokenSelectorOpenSelling(false);
         }}
-        currentToken={tokenAddress}
+        currentToken={tokenAddressSelling}
+      />
+
+      <TokenSelectorModal
+          isOpen={isTokenSelectorBuyingOpen}
+          onClose={() => setIsTokenSelectorBuyingOpen(false)}
+          onSelectToken={(address) => {
+            setTokenAddressBuying(address);
+            setIsTokenSelectorBuyingOpen(false);
+          }}
+          currentToken={tokenAddressBuying}
       />
 
       <WrapModal
         isOpen={isWrapModalOpen}
         onClose={() => setWrapModalOpen(false)}
         onConfirm={handleWrapConfirm}
-        amount={ethAmount}
+        amount={tokenAmountSelling}
         loading={wethHook.loading}
         error={wethHook.error}
         txHash={wethHook.txHash}
-      />
-
-      <TradeSettings
-        isOpen={isSettingsOpen}
-        onClose={() => setIsSettingsOpen(false)}
-        settings={settings}
-        setSettings={setSettings}
       />
     </div>
   );

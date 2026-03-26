@@ -3,9 +3,10 @@ import { useMultiVersionTrade } from './useMultiVersionTrade';
 
 export const useTrade = (
   provider: ethers.providers.Web3Provider | null,
-  signer: ethers.Signer | null
+  signer: ethers.Signer | null,
+  readOnlyProvider: ethers.providers.JsonRpcProvider
 ) => {
-  const multiVersionTrade = useMultiVersionTrade(provider, signer);
+  const multiVersionTrade = useMultiVersionTrade(provider, signer, readOnlyProvider);
 
   return {
     trade: multiVersionTrade.trade,
@@ -20,5 +21,6 @@ export const useTrade = (
     executeTrade: multiVersionTrade.executeTrade,
     clearTrade: multiVersionTrade.clearTrade,
     getRouteInfo: multiVersionTrade.getRouteInfo,
+    debugSteps: multiVersionTrade.debugSteps,
   };
 };

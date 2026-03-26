@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { detectWallets, type WalletType, type DetectedWallet } from '@/hooks/useWeb3';
 import {
   Dialog,
@@ -31,6 +31,15 @@ export const WalletModal = ({ isOpen, onClose, onConnect, isConnecting }: Wallet
     }
   }, [isOpen]);
 
+  // Memoize filtered arrays to prevent re-calculations on every render
+  const detectedWallets = useMemo(() => 
+    wallets.filter(w => w.detected), [wallets]
+  );
+
+  const undetectedWallets = useMemo(() => 
+    wallets.filter(w => !w.detected), [wallets]
+  );
+
   return (
     <Dialog open={isOpen} onOpenChange={onClose}>
       <DialogContent className="max-w-[400px] bg-card border-border p-0 gap-0 overflow-hidden">
@@ -43,7 +52,7 @@ export const WalletModal = ({ isOpen, onClose, onConnect, isConnecting }: Wallet
 
         <div className="px-4 pb-4">
           <p className="px-2 pb-3 text-xs text-muted-foreground font-medium uppercase tracking-wider">Detected wallets</p>
-          {wallets.filter(w => w.detected).map((wallet) => (
+          {detectedWallets.map((wallet) => (
             <Button
               key={wallet.type}
               onClick={() => onConnect(wallet.type)}
@@ -58,7 +67,7 @@ export const WalletModal = ({ isOpen, onClose, onConnect, isConnecting }: Wallet
               <span className="text-xs text-green-600 dark:text-green-400 font-medium bg-green-500/10 dark:bg-green-500/20 px-2 py-1 rounded-full">Detected</span>
             </Button>
           ))}
-          {wallets.filter(w => w.detected).length === 0 && (
+          {detectedWallets.length === 0 && (
             <p className="px-4 py-3 text-sm text-muted-foreground text-center bg-muted/30 rounded-xl">No wallets detected</p>
           )}
         </div>
@@ -70,7 +79,7 @@ export const WalletModal = ({ isOpen, onClose, onConnect, isConnecting }: Wallet
         </div>
 
         <div className="px-4 pb-4">
-          {wallets.filter(w => !w.detected).map((wallet) => (
+          {undetectedWallets.map((wallet) => (
             <Button
               key={wallet.type}
               onClick={() => onConnect(wallet.type)}

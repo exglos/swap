@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { ethers } from 'ethers';
 import { WETH_ADDRESS, ERC20_ABI } from '@/utils/constants';
 
@@ -11,7 +11,7 @@ interface WalletBalances {
 export const useWalletBalances = (provider: ethers.providers.Web3Provider | null, account: string | null) => {
   const [balances, setBalances] = useState<WalletBalances>({ eth: '0', weth: '0', loading: true });
 
-  const fetchBalances = async () => {
+  const fetchBalances = useCallback(async () => {
     if (!provider || !account) {
       setBalances({ eth: '0', weth: '0', loading: false });
       return;
@@ -36,11 +36,11 @@ export const useWalletBalances = (provider: ethers.providers.Web3Provider | null
     } catch (error: any) {
       setBalances({ eth: '0', weth: '0', loading: false });
     }
-  };
+  }, [provider, account]);
 
   useEffect(() => {
     fetchBalances();
-  }, [provider, account]);
+  }, [fetchBalances]);
 
   const refresh = () => {
     setBalances(prev => ({ ...prev, loading: true }));

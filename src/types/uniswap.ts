@@ -29,12 +29,20 @@ export interface TradeRoute {
   version: UniswapVersion;
   inputAmount: string;
   outputAmount: string;
+  inputAddress: string;
+  outputAddress: string;
+  inputSymbol: string;
+  outputSymbol: string;
   executionPrice: string;
   priceImpact: string;
   minimumReceived: string;
   fee: number;
   feeTier: string;
   path: string[];
+  pathSymbols?: string[];
+  isNativeInput?: boolean;
+  isNativeOutput?: boolean;
+  isMultiHop?: boolean;
   gasEstimate?: string;
 }
 
@@ -49,6 +57,14 @@ export interface V4TradeResult {
   outputAmount: string;
   route: TradeRoute;
   poolAddress: string;
+  poolPath?: V4PoolInfo[];
+  debugSteps?: RouteDebugStep[];
+}
+
+export interface RouteDebugStep {
+  label: string;
+  status: 'info' | 'success' | 'error';
+  details: string;
 }
 
 export interface MultiVersionTradeState {
@@ -58,6 +74,7 @@ export interface MultiVersionTradeState {
   isCalculating: boolean;
   error: string | null;
   version: UniswapVersion | null;
+  debugSteps?: RouteDebugStep[];
 }
 
 export interface PoolDiscoveryResult {

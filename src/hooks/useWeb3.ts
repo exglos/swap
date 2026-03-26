@@ -3,6 +3,13 @@ import { providers, type Signer } from 'ethers';
 import { CHAIN_ID } from '@/utils/constants';
 import type { EthereumProvider } from '@/types/window';
 
+// Storage keys for persistence
+const STORAGE_KEYS = {
+  WALLET_TYPE: 'connectedWalletType',
+  ACCOUNT: 'connectedAccount',
+  CHAIN_ID: 'connectedChainId'
+};
+
 export type WalletType = 'metamask' | 'phantom' | 'coinbase' | 'injected';
 
 export interface DetectedWallet {
@@ -67,6 +74,46 @@ export function detectWallets(): DetectedWallet[] {
   return wallets;
 }
 
+// Save connection state to localStorage
+const saveConnectionState = (walletType: WalletType, account: string, chainId: number) => {
+  try {
+    localStorage.setItem(STORAGE_KEYS.WALLET_TYPE, walletType);
+    localStorage.setItem(STORAGE_KEYS.ACCOUNT, account);
+    localStorage.setItem(STORAGE_KEYS.CHAIN_ID, chainId.toString());
+  } catch (error) {
+    console.warn('Failed to save wallet connection state:', error);
+  }
+};
+
+// Clear connection state from localStorage
+const clearConnectionState = () => {
+  try {
+    localStorage.removeItem(STORAGE_KEYS.WALLET_TYPE);
+    localStorage.removeItem(STORAGE_KEYS.ACCOUNT);
+    localStorage.removeItem(STORAGE_KEYS.CHAIN_ID);
+  } catch (error) {
+    console.warn('Failed to clear wallet connection state:', error);
+  }
+};
+
+// Load saved connection state from localStorage
+const loadSavedConnection = (): { walletType: WalletType | null, account: string | null, chainId: number | null } => {
+  try {
+    const walletType = localStorage.getItem(STORAGE_KEYS.WALLET_TYPE) as WalletType | null;
+    const account = localStorage.getItem(STORAGE_KEYS.ACCOUNT);
+    const chainId = localStorage.getItem(STORAGE_KEYS.CHAIN_ID);
+    
+    return {
+      walletType,
+      account,
+      chainId: chainId ? parseInt(chainId, 10) : null
+    };
+  } catch (error) {
+    console.warn('Failed to load wallet connection state:', error);
+    return { walletType: null, account: null, chainId: null };
+  }
+};
+
 export const useWeb3 = () => {
   // a readonly provider for when injected provider is not available yet
   const readonlyProvider = new providers.JsonRpcProvider('https://mainnet.infura.io/v3/02bcf0c674d447da967b67b20739ea91')
@@ -107,6 +154,9 @@ export const useWeb3 = () => {
 
       setActiveProvider(ethereum);
 
+      // Save connection state to localStorage
+      saveConnectionState(walletType, account, chainId);
+
       setState({
         readonlyProvider,
         provider,
@@ -128,6 +178,7 @@ export const useWeb3 = () => {
 
   const disconnect = useCallback(() => {
     setActiveProvider(null);
+    clearConnectionState(); // Clear saved state
     setState({
       readonlyProvider,
       provider: null,
@@ -139,43 +190,81 @@ export const useWeb3 = () => {
     });
   }, []);
 
-  // Listen for account / chain changes on the active provider
+  // Combined effect for auto-reconnect and provider event listeners
   useEffect(() => {
-    const ethereum = activeProvider;
-    if (!ethereum) return;
-
-    const handleAccountsChanged = (accounts: string[]) => {
-      if (accounts.length === 0) {
-        disconnect();
-      } else {
-        const provider = new providers.Web3Provider(ethereum as any);
-        (async () => {
-          const signer = await provider.getSigner();
-          const account = await signer.getAddress();
-          const network = await provider.getNetwork();
-          setState(prev => ({
-            ...prev,
-            provider,
-            signer,
-            account,
-            chainId: Number(network.chainId),
-          }));
-        })().catch(console.error);
+    // Auto-reconnect logic
+    const attemptAutoReconnect = async () => {
+      const savedConnection = loadSavedConnection();
+      if (savedConnection.walletType && savedConnection.account) {
+        const ethereum = getProvider(savedConnection.walletType);
+        if (ethereum) {
+          try {
+            const accounts = await ethereum.request({ method: 'eth_accounts' });
+            if (accounts.length > 0 && accounts[0].toLowerCase() === savedConnection.account?.toLowerCase()) {
+              // Account matches, attempt to reconnect
+              await connect(savedConnection.walletType);
+            } else {
+              // Account changed or disconnected, clear saved state
+              clearConnectionState();
+            }
+          } catch (error) {
+            // Failed to check accounts, clear saved state
+            clearConnectionState();
+          }
+        } else {
+          // Wallet not detected, clear saved state
+          clearConnectionState();
+        }
       }
     };
 
-    const handleChainChanged = () => {
-      window.location.reload();
+    // Set up provider event listeners
+    const setupEventListeners = (ethereum: EthereumProvider) => {
+      const handleAccountsChanged = (accounts: string[]) => {
+        if (accounts.length === 0) {
+          disconnect();
+        } else {
+          const provider = new providers.Web3Provider(ethereum as any);
+          (async () => {
+            try {
+              const signer = await provider.getSigner();
+              const account = await signer.getAddress();
+              const network = await provider.getNetwork();
+              setState(prev => ({
+                ...prev,
+                provider,
+                signer,
+                account,
+                chainId: Number(network.chainId),
+              }));
+            } catch (error) {
+              console.error('Failed to update account:', error);
+            }
+          })();
+        }
+      };
+
+      const handleChainChanged = () => {
+        window.location.reload();
+      };
+
+      ethereum.on('accountsChanged', handleAccountsChanged);
+      ethereum.on('chainChanged', handleChainChanged);
+
+      return () => {
+        ethereum.removeListener('accountsChanged', handleAccountsChanged);
+        ethereum.removeListener('chainChanged', handleChainChanged);
+      };
     };
 
-    ethereum.on('accountsChanged', handleAccountsChanged);
-    ethereum.on('chainChanged', handleChainChanged);
+    // Execute auto-reconnect
+    attemptAutoReconnect();
 
-    return () => {
-      ethereum.removeListener('accountsChanged', handleAccountsChanged);
-      ethereum.removeListener('chainChanged', handleChainChanged);
-    };
-  }, [activeProvider, disconnect]);
+    // Set up event listeners if we have an active provider
+    if (activeProvider) {
+      return setupEventListeners(activeProvider);
+    }
+  }, [connect, disconnect, activeProvider]);
 
   return {
     ...state,
